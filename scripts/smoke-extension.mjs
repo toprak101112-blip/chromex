@@ -1098,6 +1098,13 @@ try {
     throw new Error(`Smoke test failed: action card did not submit immediately (${JSON.stringify(actionSubmissions)}).`);
   }
 
+  await page.evaluate(() =>
+    window.__CODEX_SIDEPANEL_SMOKE__?.simulateActiveTabUpdateForTest?.({
+      title: "A useful video - YouTube",
+      url: "https://www.youtube.com/watch?v=abc",
+      actionCards: [],
+    }),
+  );
   await page.evaluate(() => {
     window.__CODEX_SIDEPANEL_SMOKE_SEEK_MESSAGES__ = [];
     chrome.runtime.sendMessage = ((message) => {
