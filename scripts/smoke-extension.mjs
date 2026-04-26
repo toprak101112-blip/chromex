@@ -1081,7 +1081,7 @@ try {
   }
 
   await page.evaluate(() => window.__CODEX_SIDEPANEL_SMOKE__?.enableDryRunSubmit?.());
-  await page.locator('[data-quick-system-action="summarize-page"]').click();
+  await page.locator('[data-top-quick-action="summarize-page"]').click();
   const quickSystemSubmissions = await page.evaluate(() =>
     window.__CODEX_SIDEPANEL_SMOKE__?.getDryRunSubmissions?.() ?? [],
   );
