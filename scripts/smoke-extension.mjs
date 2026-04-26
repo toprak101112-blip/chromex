@@ -75,7 +75,7 @@ try {
     timeout: 15_000,
   });
   await waitForSmokeHarness(page);
-  await page.evaluate(() => window.__CODEX_SIDEPANEL_SMOKE__?.waitForComposer());
+  await waitForSmokeComposer(page);
 
   const emptyHeroIconState = await page.evaluate(() => {
     const icon = document.querySelector(".empty-hero-icon");
@@ -107,6 +107,7 @@ try {
     );
   }
 
+  await waitForSmokeComposer(page);
   await page.locator("#composer").click();
   await page.keyboard.type(" world");
   const clickedComposerValue = await page.locator("#composer").inputValue();
@@ -1196,6 +1197,7 @@ async function assertNoHorizontalOverflow(page, label) {
 
 async function assertEmptyHeroCentered(page, width, height) {
   await page.setViewportSize({ width, height });
+  await page.waitForSelector("#chat-scroll .empty-hero", { state: "attached", timeout: 5_000 });
   const layout = await page.evaluate(() => {
     const centerOf = (rect) => rect.left + rect.width / 2;
     const chatScroll = document.querySelector("#chat-scroll");
@@ -1241,6 +1243,11 @@ async function assertEmptyHeroCentered(page, width, height) {
   ) {
     throw new Error(`Smoke test failed: empty hero is not centered at ${width}px (${JSON.stringify(layout)}).`);
   }
+}
+
+async function waitForSmokeComposer(page) {
+  await page.evaluate(() => window.__CODEX_SIDEPANEL_SMOKE__?.waitForComposer());
+  await page.waitForSelector("#composer", { state: "attached", timeout: 5_000 });
 }
 
 async function assertPanelFrameStable(page, label) {

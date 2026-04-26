@@ -3,8 +3,14 @@ import { resolve } from "node:path";
 
 import { describe, expect, test } from "vitest";
 
-const backgroundSource = readFileSync(resolve(process.cwd(), "src/background/index.ts"), "utf8");
-const sidepanelSource = readFileSync(resolve(process.cwd(), "src/sidepanel/index.ts"), "utf8");
+const backgroundSource = readFileSync(resolve(process.cwd(), "src/background/index.ts"), "utf8").replaceAll(
+  "\r\n",
+  "\n",
+);
+const sidepanelSource = readFileSync(resolve(process.cwd(), "src/sidepanel/index.ts"), "utf8").replaceAll(
+  "\r\n",
+  "\n",
+);
 
 describe("voice context and barge-in wiring", () => {
   test("collects hybrid page context before starting realtime voice", () => {
