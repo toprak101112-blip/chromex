@@ -2408,6 +2408,11 @@ function extractImageReferencesFromText(text: string): string[] {
         references.push(stripImageReferencePunctuation(match[0]));
       }
     }
+    for (const match of line.matchAll(/[a-zA-Z]:\\[^\n\r"'<>]*?\.(?:png|jpe?g|webp|gif)\b/giu)) {
+      if (match[0]) {
+        references.push(stripImageReferencePunctuation(match[0]));
+      }
+    }
   }
 
   return Array.from(new Set(references.filter(Boolean)));
@@ -2424,6 +2429,9 @@ function normalizeLocalImagePath(reference: string): string {
     }
   }
   if (trimmed.startsWith("/")) {
+    return trimmed;
+  }
+  if (/^[a-zA-Z]:\\/u.test(trimmed)) {
     return trimmed;
   }
   return "";

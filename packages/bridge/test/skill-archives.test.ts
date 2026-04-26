@@ -35,8 +35,9 @@ describe("ExternalSkillArchiveStore", () => {
       cwd: "/tmp/project",
       token: "$korean-ui",
     });
-    expect(result.skills[0]?.path.endsWith("/korean-ui/SKILL.md")).toBe(true);
-    await expect(store.listSkillRoots()).resolves.toContain(result.skills[0]?.path.replace(/\/SKILL\.md$/u, ""));
+    const skillPath = result.skills[0]?.path.replace(/\\/gu, "/") ?? "";
+    expect(skillPath.endsWith("/korean-ui/SKILL.md")).toBe(true);
+    await expect(store.listSkillRoots()).resolves.toContain(result.skills[0]?.path.replace(/[\\/]SKILL\.md$/u, ""));
   });
 
   test("rejects unsafe archive paths", async () => {

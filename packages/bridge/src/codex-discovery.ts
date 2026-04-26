@@ -91,7 +91,7 @@ async function findExecutable(
 ): Promise<string | null> {
   const trimmed = candidate.trim();
   const pathApi = getPathApi(options.platformName);
-  const pathDelimiter = options.platformName === "win32" ? ";" : delimiter;
+  const pathDelimiter = options.platformName === "win32" ? ";" : ":";
   if (!trimmed) {
     return null;
   }

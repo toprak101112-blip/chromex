@@ -1,4 +1,4 @@
-import { chmod, mkdtemp, mkdir, rm, writeFile } from "node:fs/promises";
+import { mkdtemp, mkdir, rm, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
 
@@ -38,7 +38,7 @@ describe("BridgeHarnessRuntime", () => {
               hooks: [
                 {
                   type: "command",
-                  command: "./.codex/hooks/append-user-prompt.sh",
+                  command: "node ./.codex/hooks/append-user-prompt.mjs",
                 },
               ],
             },
@@ -49,7 +49,7 @@ describe("BridgeHarnessRuntime", () => {
               hooks: [
                 {
                   type: "command",
-                  command: "./.codex/hooks/append-prompt.sh",
+                  command: "node ./.codex/hooks/append-prompt.mjs",
                 },
               ],
             },
@@ -85,15 +85,13 @@ describe("BridgeHarnessRuntime", () => {
       "Verify the attached context against trustworthy public sources and call out uncertainty.\n",
     );
     await writeFile(
-      join(workspaceRoot, ".codex/hooks/append-prompt.sh"),
-      "#!/bin/bash\nprintf '{\"appendPrompt\":\"Hook note: keep the answer concise.\"}'\n",
+      join(workspaceRoot, ".codex/hooks/append-prompt.mjs"),
+      "process.stdout.write(JSON.stringify({ appendPrompt: 'Hook note: keep the answer concise.' }));\n",
     );
     await writeFile(
-      join(workspaceRoot, ".codex/hooks/append-user-prompt.sh"),
-      "#!/bin/bash\nprintf '{\"appendPrompt\":\"Hook note: answer in the user language.\"}'\n",
+      join(workspaceRoot, ".codex/hooks/append-user-prompt.mjs"),
+      "process.stdout.write(JSON.stringify({ appendPrompt: 'Hook note: answer in the user language.' }));\n",
     );
-    await chmod(join(workspaceRoot, ".codex/hooks/append-prompt.sh"), 0o755);
-    await chmod(join(workspaceRoot, ".codex/hooks/append-user-prompt.sh"), 0o755);
 
     const runtime = new BridgeHarnessRuntime({ workspaceRoot, userRoot });
     const snapshot = await runtime.readSnapshot();

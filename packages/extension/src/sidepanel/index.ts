@@ -1200,7 +1200,7 @@ function renderNow(): void {
     accountStatus: state.accountStatus,
     usageNoticeAccepted: state.settings.usageNoticeAccepted,
   });
-  const showOnboarding = showAuthOnboarding || showUsageNoticeOnboarding;
+  const showOnboarding = !smokeTestMode && (showAuthOnboarding || showUsageNoticeOnboarding);
   const scrollState = captureScrollPositions();
   const composerState = captureComposerRenderState();
 
