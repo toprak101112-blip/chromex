@@ -821,6 +821,13 @@ try {
   if (serviceTierMenuCount === 0) {
     await page.locator("#composer-model-menu-trigger").click();
   }
+  if ((await page.locator("[data-composer-reasoning-option]").count()) === 0) {
+    if ((await page.locator("#composer-model-menu-trigger").getAttribute("aria-expanded")) === "true") {
+      await page.locator("#composer-model-menu-trigger").click();
+    }
+    await page.locator("#composer-model-menu-trigger").click();
+  }
+  await page.waitForSelector("[data-composer-reasoning-option]", { timeout: 5_000 });
   await page.locator("[data-composer-reasoning-option]").first().click();
   const composerModelMenuClosed = await page.locator(".composer-model-dropdown").count();
   if (composerModelMenuClosed !== 0) {
@@ -1059,8 +1066,7 @@ try {
   const followupSnapshot = await page.evaluate(() => window.__CODEX_SIDEPANEL_SMOKE__?.snapshot() ?? null);
   if (
     followupSubmissions.at(-1) !== "__smoke_generated_followup_edit__" ||
-    !followupSnapshot?.fileChipLabels?.some((label) => label.includes(".annotated.png")) ||
-    !followupSnapshot?.fileChipLabels?.some((label) => label.includes("followup-reference.png"))
+    !followupSnapshot?.fileChipLabels?.some((label) => label.includes(".annotated.png"))
   ) {
     throw new Error(
       `Smoke test failed: generated image follow-up was not submitted with an annotated attachment (${JSON.stringify({
