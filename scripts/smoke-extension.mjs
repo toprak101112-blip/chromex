@@ -522,7 +522,7 @@ try {
   ]);
 
   const composerPlaceholder = await page.locator("#composer").getAttribute("placeholder");
-  const micButtonVisible = await page.locator("#voice-toggle").isVisible();
+  const micButtonVisible = await page.locator("#voice-input-toggle").isVisible();
 
   if (!chipLabels.some((label) => label.includes("brief.txt"))) {
     throw new Error("Smoke test failed: text attachment chip did not render.");
@@ -711,7 +711,7 @@ try {
     permissionPill: Boolean(document.querySelector("#composer-permission-pill")),
     shieldIcon: Boolean(document.querySelector(".composer-shield-icon")),
     modelReasoningGroup: Boolean(document.querySelector(".composer-model-reasoning-group")),
-    microphone: Boolean(document.querySelector("#voice-toggle")),
+    microphone: Boolean(document.querySelector("#voice-input-toggle")),
     sendButton: Boolean(document.querySelector("#send-prompt")),
   }));
   if (
@@ -1141,7 +1141,7 @@ async function assertComposerControlsInsideFrame(page, label) {
     const controlBar = document.querySelector(".composer-control-bar")?.getBoundingClientRect();
     const sendButton = document.querySelector("#send-prompt, #stop-turn")?.getBoundingClientRect();
     const modelTrigger = document.querySelector("#composer-model-menu-trigger")?.getBoundingClientRect();
-    const voiceButton = document.querySelector("#voice-toggle")?.getBoundingClientRect();
+    const voiceButton = document.querySelector("#voice-input-toggle")?.getBoundingClientRect();
     return {
       frameRight: Math.round(frame?.right ?? 0),
       controlBarRight: Math.round(controlBar?.right ?? 0),
