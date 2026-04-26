@@ -1090,7 +1090,7 @@ try {
     throw new Error(`Smoke test failed: quick system did not submit current-page prompt (${JSON.stringify(quickSystemSubmissions)}).`);
   }
 
-  await page.locator(".action-card").first().click();
+  await page.locator('[data-action="youtube-summary-question"]').click();
   const actionSubmissions = await page.evaluate(() =>
     window.__CODEX_SIDEPANEL_SMOKE__?.getDryRunSubmissions?.() ?? [],
   );
