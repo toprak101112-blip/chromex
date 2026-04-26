@@ -8,9 +8,10 @@
     "packages/*"
   ],
   "scripts": {
+    "prepare:workspace": "npm run build --workspace @codex-sidepanel/shared",
     "build": "npm run build --workspace @codex-sidepanel/shared && npm run build --workspace @codex-sidepanel/bridge && npm run build --workspace @codex-sidepanel/native-host && npm run build --workspace @codex-sidepanel/extension",
-    "test": "npm run test --workspace @codex-sidepanel/shared && npm run test --workspace @codex-sidepanel/bridge && npm run test --workspace @codex-sidepanel/native-host && npm run test --workspace @codex-sidepanel/extension",
-    "typecheck": "npm run typecheck --workspace @codex-sidepanel/shared && npm run typecheck --workspace @codex-sidepanel/bridge && npm run typecheck --workspace @codex-sidepanel/native-host && npm run typecheck --workspace @codex-sidepanel/extension",
+    "test": "npm run prepare:workspace && npm run test --workspace @codex-sidepanel/shared && npm run test --workspace @codex-sidepanel/bridge && npm run test --workspace @codex-sidepanel/native-host && npm run test --workspace @codex-sidepanel/extension",
+    "typecheck": "npm run prepare:workspace && npm run typecheck --workspace @codex-sidepanel/bridge && npm run typecheck --workspace @codex-sidepanel/native-host && npm run typecheck --workspace @codex-sidepanel/extension",
     "lint": "npm run lint --workspaces --if-present",
     "smoke": "node scripts/smoke-extension.mjs",
     "smoke:install-browser": "npx -y playwright@1.59.1 install chromium",
