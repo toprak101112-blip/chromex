@@ -973,8 +973,8 @@ try {
   const busyMessageActionState = await page.evaluate(() => {
     window.__CODEX_SIDEPANEL_SMOKE__?.setPromptActivityForTest?.(true);
     return {
-      copyButtons: document.querySelectorAll("[data-message-copy]").length,
-      regenerateButtons: document.querySelectorAll("[data-message-regenerate]").length,
+      copyButtons: document.querySelectorAll(".message-actions.assistant [data-message-copy]").length,
+      regenerateButtons: document.querySelectorAll(".message-actions.assistant [data-message-regenerate]").length,
     };
   });
   if (busyMessageActionState.copyButtons !== 0 || busyMessageActionState.regenerateButtons !== 0) {
