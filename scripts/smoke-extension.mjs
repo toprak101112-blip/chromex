@@ -1069,6 +1069,13 @@ try {
   );
   await page.locator("#image-annotation-followup-input").fill("__smoke_generated_followup_edit__");
   await page.locator(".image-annotation-send").click();
+  await page.waitForFunction(
+    () =>
+      (window.__CODEX_SIDEPANEL_SMOKE__?.getDryRunSubmissions?.() ?? []).includes(
+        "__smoke_generated_followup_edit__",
+      ),
+    { timeout: 5_000 },
+  );
   const followupSubmissions = await page.evaluate(() =>
     window.__CODEX_SIDEPANEL_SMOKE__?.getDryRunSubmissions?.() ?? [],
   );
