@@ -1002,42 +1002,36 @@ try {
   }));
   await page.locator("[data-message-copy]").first().click();
   await page.waitForFunction(
-    () => document.querySelectorAll(".notification-toast.status-banner").length === 1,
+    () => Boolean(document.querySelector("[data-message-copy].copied .message-action-check")),
     undefined,
     { timeout: 2_000 },
   );
-  const floatingCopyToastState = await page.evaluate(() => {
-    const stack = document.querySelector(".notification-stack");
-    const style = stack ? getComputedStyle(stack) : null;
+  const copyFeedbackState = await page.evaluate(() => {
     return {
       inlineStatusBanners: document.querySelectorAll(".shell > .status-banner").length,
       floatingToasts: document.querySelectorAll(".notification-toast.status-banner").length,
-      position: style?.position ?? "",
+      copiedButtons: document.querySelectorAll("[data-message-copy].copied .message-action-check").length,
       shellHeight: document.querySelector(".shell")?.getBoundingClientRect().height ?? 0,
       mainTop: document.querySelector(".main-stage")?.getBoundingClientRect().top ?? 0,
       mainHeight: document.querySelector(".main-stage")?.getBoundingClientRect().height ?? 0,
     };
   });
   if (
-    floatingCopyToastState.inlineStatusBanners !== 0 ||
-    floatingCopyToastState.floatingToasts !== 1 ||
-    !["fixed", "absolute"].includes(floatingCopyToastState.position) ||
-    Math.abs(floatingCopyToastState.shellHeight - layoutBeforeCopyToast.shellHeight) > 1 ||
-    Math.abs(floatingCopyToastState.mainTop - layoutBeforeCopyToast.mainTop) > 1 ||
-    Math.abs(floatingCopyToastState.mainHeight - layoutBeforeCopyToast.mainHeight) > 1
+    copyFeedbackState.inlineStatusBanners !== 0 ||
+    copyFeedbackState.floatingToasts !== 0 ||
+    copyFeedbackState.copiedButtons !== 1 ||
+    Math.abs(copyFeedbackState.shellHeight - layoutBeforeCopyToast.shellHeight) > 1 ||
+    Math.abs(copyFeedbackState.mainTop - layoutBeforeCopyToast.mainTop) > 1 ||
+    Math.abs(copyFeedbackState.mainHeight - layoutBeforeCopyToast.mainHeight) > 1
   ) {
     throw new Error(
-      `Smoke test failed: copy notification was not floating without layout shift (${JSON.stringify({
+      `Smoke test failed: copy feedback caused a layout shift or did not use the inline check state (${JSON.stringify({
         layoutBeforeCopyToast,
-        floatingCopyToastState,
+        copyFeedbackState,
       })}).`,
     );
   }
-  await page.waitForFunction(
-    () => document.querySelectorAll(".notification-toast").length === 0,
-    undefined,
-    { timeout: 4_000 },
-  );
+  await page.waitForFunction(() => !document.querySelector("[data-message-copy].copied"), undefined, { timeout: 4_000 });
   await assertNoHorizontalOverflow(page, "chat messages after long response");
   await assertPanelFrameStable(page, "chat messages after long response");
   await page.setViewportSize({ width: 375, height: 520 });
