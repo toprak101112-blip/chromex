@@ -820,9 +820,11 @@ try {
   }
   void serviceTierMenuCount;
   await page
-    .waitForFunction(() => document.querySelector("#composer-model-menu-trigger")?.getAttribute("aria-expanded") === "false", {
-      timeout: 5_000,
-    })
+    .waitForFunction(
+      () => document.querySelector("#composer-model-menu-trigger")?.getAttribute("aria-expanded") === "false",
+      undefined,
+      { timeout: 5_000 },
+    )
     .catch(() => undefined);
   if ((await page.locator("#composer-model-menu-trigger").getAttribute("aria-expanded")) === "true") {
     await page.locator(".topbar").click();
@@ -831,9 +833,7 @@ try {
   await page.waitForSelector("[data-composer-reasoning-option]", { timeout: 5_000 });
   await page.locator("[data-composer-reasoning-option]").first().click();
   await page
-    .waitForFunction(() => !document.querySelector(".composer-model-dropdown"), {
-      timeout: 5_000,
-    })
+    .waitForFunction(() => !document.querySelector(".composer-model-dropdown"), undefined, { timeout: 5_000 })
     .catch(() => undefined);
   const composerModelMenuClosed = await page.locator(".composer-model-dropdown").count();
   if (composerModelMenuClosed !== 0) {
@@ -892,6 +892,7 @@ try {
       const select = document.querySelector("#profile-select");
       return Array.from(select?.options ?? []).some((option) => option.textContent === "Smoke Profile");
     },
+    undefined,
     { timeout: 5_000 },
   );
   const createdProfileState = await page.evaluate(() => {
@@ -1002,6 +1003,7 @@ try {
   await page.locator("[data-message-copy]").first().click();
   await page.waitForFunction(
     () => document.querySelectorAll(".notification-toast.status-banner").length === 1,
+    undefined,
     { timeout: 2_000 },
   );
   const floatingCopyToastState = await page.evaluate(() => {
@@ -1031,7 +1033,11 @@ try {
       })}).`,
     );
   }
-  await page.waitForFunction(() => document.querySelectorAll(".notification-toast").length === 0, { timeout: 4_000 });
+  await page.waitForFunction(
+    () => document.querySelectorAll(".notification-toast").length === 0,
+    undefined,
+    { timeout: 4_000 },
+  );
   await assertNoHorizontalOverflow(page, "chat messages after long response");
   await assertPanelFrameStable(page, "chat messages after long response");
   await page.setViewportSize({ width: 375, height: 520 });
@@ -1065,6 +1071,7 @@ try {
   ]);
   await page.waitForFunction(
     () => document.querySelector(".image-annotation-reference-chips")?.textContent?.includes("followup-reference.png"),
+    undefined,
     { timeout: 5_000 },
   );
   await page.locator("#image-annotation-followup-input").fill("__smoke_generated_followup_edit__");
@@ -1074,6 +1081,7 @@ try {
       (window.__CODEX_SIDEPANEL_SMOKE__?.getDryRunSubmissions?.() ?? []).includes(
         "__smoke_generated_followup_edit__",
       ),
+    undefined,
     { timeout: 5_000 },
   );
   const followupSubmissions = await page.evaluate(() =>
