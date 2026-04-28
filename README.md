@@ -23,13 +23,15 @@ Published by **GenexisAI CHOI**.
 
 Fastest path for users:
 
-1. Open the latest GitHub Release.
-2. Download `chromex-*-unpacked-extension-*.zip`.
+1. Open the [latest GitHub Release](https://github.com/GENEXIS-AI/chromex/releases/latest).
+2. Download [`chromex-unpacked-extension.zip`](https://github.com/GENEXIS-AI/chromex/releases/latest/download/chromex-unpacked-extension.zip) from the release assets.
 3. Unzip it.
 4. Open `chrome://extensions`.
 5. Enable **Developer mode**.
 6. Select **Load unpacked** and choose the unzipped `chromex-extension` folder.
 7. Open Chromex from the Chrome toolbar or side panel and follow onboarding.
+
+Release ZIP files are attached to GitHub Releases. They are not committed into the repository file tree. If the direct download link does not open, use the [latest release page](https://github.com/GENEXIS-AI/chromex/releases/latest) and download `chromex-unpacked-extension.zip` from **Assets**.
 
 Developer source install:
 
@@ -145,6 +147,7 @@ This writes two artifacts under `output/public-release/`:
 
 - `chromex-*-public-source-*.zip`: source archive for GitHub publication.
 - `chromex-*-unpacked-extension-*.zip`: ready-to-unzip Chrome Developer Mode package. After unzip, select the `chromex-extension` folder in **Load unpacked**.
+- `chromex-public-source.zip` and `chromex-unpacked-extension.zip`: stable asset names for GitHub Release direct-download links.
 
 ## Release Management
 

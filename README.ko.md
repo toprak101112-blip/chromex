@@ -23,13 +23,15 @@ Chromex는 Chrome과 Codex를 로컬 네이티브 브리지로 연결하는 Chro
 
 일반 사용자 설치:
 
-1. 최신 GitHub Release를 엽니다.
-2. `chromex-*-unpacked-extension-*.zip`을 다운로드합니다.
+1. [최신 GitHub Release](https://github.com/GENEXIS-AI/chromex/releases/latest)를 엽니다.
+2. Release assets의 [`chromex-unpacked-extension.zip`](https://github.com/GENEXIS-AI/chromex/releases/latest/download/chromex-unpacked-extension.zip)을 다운로드합니다.
 3. 압축을 풉니다.
 4. Chrome에서 `chrome://extensions`를 엽니다.
 5. **개발자 모드**를 켭니다.
 6. **압축해제된 확장 프로그램을 로드합니다**를 선택하고 압축을 푼 `chromex-extension` 폴더를 선택합니다.
 7. Chrome 툴바 또는 사이드 패널에서 Chromex를 열고 온보딩을 진행합니다.
+
+릴리즈 ZIP 파일은 GitHub Release에 첨부되는 파일입니다. 저장소 파일 목록에 직접 커밋하지 않습니다. 직접 다운로드 링크가 열리지 않으면 [최신 릴리즈 페이지](https://github.com/GENEXIS-AI/chromex/releases/latest)의 **Assets**에서 `chromex-unpacked-extension.zip`을 다운로드하세요.
 
 개발자 소스 설치:
 
@@ -145,6 +147,7 @@ npm run package:public
 
 - `chromex-*-public-source-*.zip`: GitHub 공개용 소스 아카이브
 - `chromex-*-unpacked-extension-*.zip`: Chrome 개발자 모드에서 바로 로드할 수 있는 패키지. 압축 해제 후 **압축해제된 확장 프로그램을 로드합니다**에서 `chromex-extension` 폴더를 선택합니다.
+- `chromex-public-source.zip`, `chromex-unpacked-extension.zip`: GitHub Release 직접 다운로드 링크용 안정적인 asset 이름
 
 ## 릴리즈 관리
 

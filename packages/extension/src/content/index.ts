@@ -24,6 +24,9 @@ let imagePromptHoverInstalled = false;
 let imagePromptHoverButton: HTMLButtonElement | null = null;
 let imagePromptHoverTarget: HTMLImageElement | null = null;
 let imagePromptHoverHideTimer: number | null = null;
+const IMAGE_PROMPT_HOVER_BUTTON_CLASS = "chromex-image-prompt-button";
+const IMAGE_PROMPT_HOVER_BUTTON_SELECTOR = `.${IMAGE_PROMPT_HOVER_BUTTON_CLASS}`;
+const IMAGE_PROMPT_HOVER_HIDE_DELAY_MS = 100;
 const highlightedElements = new Set<HTMLElement>();
 const domActionElementRefs = new Map<string, HTMLElement>();
 const AI_CONTROL_OVERLAY_MAX_MS = 45_000;
@@ -498,13 +501,18 @@ function clamp(value: number, min: number, max: number): number {
 
 function installImagePromptHover(): void {
   if (imagePromptHoverInstalled) {
+    removeImagePromptHoverButtons();
     return;
   }
   imagePromptHoverInstalled = true;
+  removeImagePromptHoverButtons();
   document.addEventListener("pointerover", handleImagePromptPointerOver, true);
   document.addEventListener("pointerout", handleImagePromptPointerOut, true);
   document.addEventListener("pointermove", handleImagePromptPointerMove, true);
+  document.addEventListener("pointerleave", hideImagePromptHoverButton, true);
   document.addEventListener("scroll", hideImagePromptHoverButton, true);
+  document.addEventListener("visibilitychange", handleImagePromptVisibilityChange, true);
+  window.addEventListener("blur", hideImagePromptHoverButton);
 }
 
 function handleImagePromptPointerOver(event: PointerEvent): void {
@@ -532,14 +540,20 @@ function handleImagePromptPointerMove(event: PointerEvent): void {
     showImagePromptHoverButton(target);
     return;
   }
-  if (!imagePromptHoverTarget || imagePromptHoverButton?.hidden) {
+  if (!imagePromptHoverTarget || !imagePromptHoverButton?.isConnected) {
     return;
   }
   if (isPointerInsideImagePromptHoverSurface(event.clientX, event.clientY)) {
     clearImagePromptHoverHideTimer();
     return;
   }
-  scheduleHideImagePromptHoverButton();
+  hideImagePromptHoverButton();
+}
+
+function handleImagePromptVisibilityChange(): void {
+  if (document.visibilityState !== "visible") {
+    hideImagePromptHoverButton();
+  }
 }
 
 function isPointerInsideImagePromptHoverSurface(clientX: number, clientY: number): boolean {
@@ -571,17 +585,20 @@ function showImagePromptHoverButton(image: HTMLImageElement): void {
   clearImagePromptHoverHideTimer();
   const button = getImagePromptHoverButton();
   positionImagePromptHoverButton(image, button);
-  button.hidden = false;
+  removeImagePromptHoverButtons(button);
+  scheduleImagePromptHoverButtonPrune(button);
 }
 
 function getImagePromptHoverButton(): HTMLButtonElement {
-  if (imagePromptHoverButton) {
+  if (imagePromptHoverButton?.isConnected) {
     return imagePromptHoverButton;
   }
+  imagePromptHoverButton = null;
+  removeImagePromptHoverButtons();
 
   const button = document.createElement("button");
   button.type = "button";
-  button.className = "chromex-image-prompt-button";
+  button.className = IMAGE_PROMPT_HOVER_BUTTON_CLASS;
   button.title = "Extract image prompt";
   button.setAttribute("aria-label", "Extract image prompt");
   const icon = document.createElement("img");
@@ -609,10 +626,8 @@ function getImagePromptHoverButton(): HTMLButtonElement {
     cursor: "pointer",
     padding: "0",
   });
-  button.hidden = true;
-  button.addEventListener("pointerover", () => {
-    clearImagePromptHoverHideTimer();
-  });
+  button.addEventListener("pointerenter", clearImagePromptHoverHideTimer);
+  button.addEventListener("pointerover", clearImagePromptHoverHideTimer);
   button.addEventListener("pointerleave", scheduleHideImagePromptHoverButton);
   button.addEventListener("click", (event) => {
     event.preventDefault();
@@ -636,21 +651,38 @@ function scheduleHideImagePromptHoverButton(): void {
   if (imagePromptHoverHideTimer) {
     return;
   }
-  imagePromptHoverHideTimer = window.setTimeout(hideImagePromptHoverButton, 120);
+  imagePromptHoverHideTimer = window.setTimeout(hideImagePromptHoverButton, IMAGE_PROMPT_HOVER_HIDE_DELAY_MS);
 }
 
 function hideImagePromptHoverButton(): void {
   clearImagePromptHoverHideTimer();
-  if (imagePromptHoverButton) {
-    imagePromptHoverButton.hidden = true;
-  }
+  imagePromptHoverButton?.remove();
+  imagePromptHoverButton = null;
   imagePromptHoverTarget = null;
+  removeImagePromptHoverButtons();
 }
 
 function clearImagePromptHoverHideTimer(): void {
   if (imagePromptHoverHideTimer) {
     window.clearTimeout(imagePromptHoverHideTimer);
     imagePromptHoverHideTimer = null;
+  }
+}
+
+function scheduleImagePromptHoverButtonPrune(except: HTMLButtonElement | null = imagePromptHoverButton): void {
+  window.setTimeout(() => {
+    if (except?.isConnected) {
+      removeImagePromptHoverButtons(except);
+    }
+  }, 0);
+}
+
+function removeImagePromptHoverButtons(except: HTMLButtonElement | null = null): void {
+  for (const button of Array.from(document.querySelectorAll<HTMLButtonElement>(IMAGE_PROMPT_HOVER_BUTTON_SELECTOR))) {
+    if (button === except) {
+      continue;
+    }
+    button.remove();
   }
 }
 

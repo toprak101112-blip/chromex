@@ -1,5 +1,5 @@
 import { execFileSync } from "node:child_process";
-import { cp, mkdir, readFile, readdir, rm, stat, unlink, writeFile } from "node:fs/promises";
+import { copyFile, cp, mkdir, readFile, readdir, rm, stat, unlink, writeFile } from "node:fs/promises";
 import { basename, dirname, extname, join, relative, resolve, sep } from "node:path";
 import process from "node:process";
 import JSZip from "jszip";
@@ -14,6 +14,8 @@ const sourceStagingDir = resolve(outDir, "chromex-public-source");
 const unpackedStagingDir = resolve(outDir, "chromex-unpacked-extension");
 const sourceZipPath = resolve(outDir, `chromex-${version}-public-source-${timestamp}.zip`);
 const unpackedZipPath = resolve(outDir, `chromex-${version}-unpacked-extension-${timestamp}.zip`);
+const stableSourceZipPath = resolve(outDir, "chromex-public-source.zip");
+const stableUnpackedZipPath = resolve(outDir, "chromex-unpacked-extension.zip");
 
 const sourceBlockedPathPatterns = [
   /(^|\/)\.git(?:\/|$)/u,
@@ -91,9 +93,15 @@ await createZipFromDirectory(sourceStagingDir, sourceZipPath, "chromex");
 await createZipFromDirectory(unpackedStagingDir, unpackedZipPath, "chromex-extension");
 await validateArchive(sourceZipPath, { expectedManifest: false });
 await validateArchive(unpackedZipPath, { expectedManifest: true });
+await copyFile(sourceZipPath, stableSourceZipPath);
+await copyFile(unpackedZipPath, stableUnpackedZipPath);
+await validateArchive(stableSourceZipPath, { expectedManifest: false });
+await validateArchive(stableUnpackedZipPath, { expectedManifest: true });
 
 console.log(`Public source archive created: ${sourceZipPath}`);
 console.log(`Unpacked extension archive created: ${unpackedZipPath}`);
+console.log(`Stable public source archive created: ${stableSourceZipPath}`);
+console.log(`Stable unpacked extension archive created: ${stableUnpackedZipPath}`);
 console.log(`Load this unpacked folder in Chrome after unzip: ${unpackedStagingDir}`);
 
 async function assertExtensionBuilt() {

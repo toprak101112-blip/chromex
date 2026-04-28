@@ -66,6 +66,23 @@ describe("online image prompt extraction", () => {
     expect(sidepanelSource).toContain("await sendPrompt(prompt)");
   });
 
+  test("removes stale hover buttons from the page instead of leaving hidden DOM behind", () => {
+    expect(contentSource).toContain("function removeImagePromptHoverButtons");
+    expect(contentSource).toContain("removeImagePromptHoverButtons(button)");
+    expect(contentSource).toContain("button.remove()");
+    expect(contentSource).toContain('document.addEventListener("pointerleave", hideImagePromptHoverButton, true)');
+    expect(contentSource).toContain('window.addEventListener("blur", hideImagePromptHoverButton)');
+    expect(contentSource).toContain("scheduleImagePromptHoverButtonPrune(button)");
+  });
+
+  test("keeps the hover button stable while the pointer moves from the image onto the button", () => {
+    const pointerOutHandler = getFunctionSource(contentSource, "handleImagePromptPointerOut");
+    expect(pointerOutHandler).toContain("scheduleHideImagePromptHoverButton()");
+    expect(pointerOutHandler).not.toContain("hideImagePromptHoverButton();");
+    expect(contentSource).toContain('button.addEventListener("pointerenter", clearImagePromptHoverHideTimer)');
+    expect(contentSource).toContain('button.addEventListener("pointerover", clearImagePromptHoverHideTimer)');
+  });
+
   test("opens the side panel before async storage work and avoids extra page context", () => {
     const messageListenerStart = backgroundSource.indexOf("chrome.runtime.onMessage.addListener");
     const fastExtractPath = backgroundSource.indexOf('message.type === "page.image-prompt.extract"', messageListenerStart);

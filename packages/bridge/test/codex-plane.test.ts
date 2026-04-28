@@ -1321,13 +1321,14 @@ describe("CodexImagePlane", () => {
     expect(client.calls.find((call) => call.method === "turn/start")).toBeUndefined();
   });
 
-  test("normalizes app-server image_gen free-account failures", async () => {
-    const workspaceRoot = await mkdtemp(join(tmpdir(), "codex-image-generate-free-error-"));
+  test("preserves app-server image generation failures without inferring the account plan from text", async () => {
+    const workspaceRoot = await mkdtemp(join(tmpdir(), "codex-image-generate-app-error-"));
     const imageAssets = new BridgeImageAssetStore({
       outputDir: () => join(workspaceRoot, ".codex-sidepanel", "generated-images"),
     });
+    const appServerMessage = "Image_gen tool is not available for free accounts.";
     const client = new FakeCodexClient({
-      turnStartFailures: ["Image_gen tool is not available for free accounts."],
+      turnStartFailures: [appServerMessage],
     });
     const plane = new CodexImagePlane(
       {
@@ -1338,13 +1339,19 @@ describe("CodexImagePlane", () => {
       { client: client as never, imageAssets },
     );
 
-    await expect(
-      plane.startGenerate({
+    let thrownMessage = "";
+    try {
+      await plane.startGenerate({
         prompt: "Generate a product concept image.",
         contexts: [],
         model: "gpt-image-2",
-      }),
-    ).rejects.toThrow("Image generation is not available on free ChatGPT accounts");
+      });
+    } catch (error) {
+      thrownMessage = error instanceof Error ? error.message : String(error);
+    }
+
+    expect(thrownMessage).toBe(appServerMessage);
+    expect(thrownMessage).not.toContain("Image generation is not available on free ChatGPT accounts");
   });
 
   test("materializes visible-screen context for infographic generation", async () => {

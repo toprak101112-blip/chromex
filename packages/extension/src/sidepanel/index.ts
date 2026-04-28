@@ -9165,59 +9165,59 @@ async function sendPrompt(
   promptSubmissionBootstrapInFlight = true;
 
   try {
-  Object.assign(state, createPendingComposerDraftState());
-  state.activeView = "chat";
-  const activeProfileId = ensureComposerProfileSelection();
-  if (!state.currentConversationId) {
-    const created = await sendRuntimeMessage<{ conversation: SavedConversation }>({
-      type: "conversation.new",
-      profileId: activeProfileId,
-      model: state.selectedModel,
+    Object.assign(state, createPendingComposerDraftState());
+    state.activeView = "chat";
+    const activeProfileId = ensureComposerProfileSelection();
+    if (!state.currentConversationId) {
+      const created = await sendRuntimeMessage<{ conversation: SavedConversation }>({
+        type: "conversation.new",
+        profileId: activeProfileId,
+        model: state.selectedModel,
+      });
+      hydrateConversation(created.conversation);
+    }
+    conversationIdAtSend = state.currentConversationId;
+    if (options.resetThread) {
+      state.threadId = "";
+      state.activeTurn = null;
+    }
+    const sendAsTurnSteer = shouldSendComposerAsTurnSteer({
+      draft: message,
+      resetThread: Boolean(options.resetThread),
+      threadId: state.threadId || undefined,
+      activeTurn: state.activeTurn,
     });
-    hydrateConversation(created.conversation);
-  }
-  conversationIdAtSend = state.currentConversationId;
-  if (options.resetThread) {
-    state.threadId = "";
-    state.activeTurn = null;
-  }
-  const sendAsTurnSteer = shouldSendComposerAsTurnSteer({
-    draft: message,
-    resetThread: Boolean(options.resetThread),
-    threadId: state.threadId || undefined,
-    activeTurn: state.activeTurn,
-  });
-  sanitizeUnavailableCurrentPageState();
-  const nextAttachments = Array.from(state.attachments);
-  const contextHint = buildConversationContextHint();
-  const generatedImageAttachments = await createGeneratedImageFileAttachmentsForPrompt(
-    message,
-    contextHint,
-    activeProfileId,
-    state.fileAttachments.length,
-  );
-  const nextFileAttachments = [...state.fileAttachments, ...generatedImageAttachments];
-  const messageProfile = createMessageProfileSnapshot();
-  userMessageId = `user-${Date.now()}`;
-  clientRequestId = `prompt-${Date.now()}-${Math.random().toString(36).slice(2)}`;
-  setActivePromptUserMessageId(resolveActivePromptUserMessageIdForSend(userMessageId, sendAsTurnSteer));
-  state.promptActivity = {
-    clientRequestId,
-    phase: "preparing",
-  };
-  promptSubmissionBootstrapInFlight = false;
-  promptRequestConversationIds.set(clientRequestId, conversationIdAtSend);
-  promptActivitiesByConversationId.set(conversationIdAtSend, state.promptActivity);
-  state.messages.push({
-    id: userMessageId,
-    role: "user",
-    text: displayMessage || message,
-    ...(nextFileAttachments.length ? { attachments: createConversationMessageAttachments(nextFileAttachments) } : {}),
-    ...(messageProfile ? { profile: messageProfile } : {}),
-  });
-  rememberCurrentConversationSnapshot();
-  render();
-  scheduleConversationPersist();
+    sanitizeUnavailableCurrentPageState();
+    const nextAttachments = Array.from(state.attachments);
+    const contextHint = buildConversationContextHint();
+    const generatedImageAttachments = await createGeneratedImageFileAttachmentsForPrompt(
+      message,
+      contextHint,
+      activeProfileId,
+      state.fileAttachments.length,
+    );
+    const nextFileAttachments = [...state.fileAttachments, ...generatedImageAttachments];
+    const messageProfile = createMessageProfileSnapshot();
+    userMessageId = `user-${Date.now()}`;
+    clientRequestId = `prompt-${Date.now()}-${Math.random().toString(36).slice(2)}`;
+    setActivePromptUserMessageId(resolveActivePromptUserMessageIdForSend(userMessageId, sendAsTurnSteer));
+    state.promptActivity = {
+      clientRequestId,
+      phase: "preparing",
+    };
+    promptSubmissionBootstrapInFlight = false;
+    promptRequestConversationIds.set(clientRequestId, conversationIdAtSend);
+    promptActivitiesByConversationId.set(conversationIdAtSend, state.promptActivity);
+    state.messages.push({
+      id: userMessageId,
+      role: "user",
+      text: displayMessage || message,
+      ...(nextFileAttachments.length ? { attachments: createConversationMessageAttachments(nextFileAttachments) } : {}),
+      ...(messageProfile ? { profile: messageProfile } : {}),
+    });
+    rememberCurrentConversationSnapshot();
+    render();
+    scheduleConversationPersist();
 
     const result = await sendRuntimeMessageWithConfirmation<{
       threadId: string;

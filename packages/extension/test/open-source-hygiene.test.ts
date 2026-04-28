@@ -46,6 +46,8 @@ describe("open-source repository hygiene", () => {
     expect(koreanReadme).toContain("npm run package:public");
     expect(readme).toContain("./assets/chromex-hero.png");
     expect(koreanReadme).toContain("./assets/chromex-hero.png");
+    expect(readme).toContain("releases/latest/download/chromex-unpacked-extension.zip");
+    expect(koreanReadme).toContain("releases/latest/download/chromex-unpacked-extension.zip");
     expect(existsSync(resolve(repoRoot, "assets/chromex-hero.png"))).toBe(true);
     expect(readme).not.toContain(["What", "Is", "Not", "Published"].join(" "));
     expect(koreanReadme).not.toContain(["공개하지", "않는", "항목"].join(" "));
@@ -80,6 +82,7 @@ describe("open-source repository hygiene", () => {
     expect(existsSync(resolve(repoRoot, "RELEASE.md"))).toBe(true);
     expect(readRepoFile("RELEASE.md")).toContain("0.1.1");
     expect(readRepoFile("RELEASE.md")).toContain("semantic versioning");
+    expect(readRepoFile("RELEASE.md")).toContain("chromex-unpacked-extension.zip");
     expect(existsSync(resolve(repoRoot, "scripts/package-public-release.mjs"))).toBe(true);
     expect(existsSync(resolve(repoRoot, "scripts/audit-git-history.mjs"))).toBe(true);
   });

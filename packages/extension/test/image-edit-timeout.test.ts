@@ -2,6 +2,7 @@ import { describe, expect, test } from "vitest";
 
 import { buildImageEditTimeoutMessage, IMAGE_EDIT_TIMEOUT_MS } from "../src/background/image-edit-timeout.js";
 import { getUiStrings } from "../src/sidepanel/i18n.js";
+import { listSupportedUiLanguageOptions } from "../src/ui-language.js";
 
 describe("image edit timeout policy", () => {
   test("waits up to 20 minutes for long Codex image generation jobs", () => {
@@ -10,9 +11,28 @@ describe("image edit timeout policy", () => {
 
   test("explains the 20 minute image generation timeout to the user", () => {
     expect(buildImageEditTimeoutMessage()).toContain("20 minutes");
-    expect(buildImageEditTimeoutMessage()).toContain("free accounts");
+    expect(buildImageEditTimeoutMessage()).not.toContain("free accounts");
     expect(buildImageEditTimeoutMessage(getUiStrings("ko").errors.imageEditTimeout)).toContain("20분");
-    expect(buildImageEditTimeoutMessage(getUiStrings("ko").errors.imageEditTimeout)).toContain("무료 계정");
+    expect(buildImageEditTimeoutMessage(getUiStrings("ko").errors.imageEditTimeout)).not.toContain("무료 계정");
+    expect(buildImageEditTimeoutMessage(getUiStrings("ja").errors.imageEditTimeout)).not.toBe(
+      buildImageEditTimeoutMessage(),
+    );
+  });
+
+  test("uses the full UI language catalog for image edit timeout failures", () => {
+    const locales = listSupportedUiLanguageOptions()
+      .map((option) => option.locale)
+      .filter((locale) => locale !== "auto");
+
+    for (const locale of locales) {
+      const message = buildImageEditTimeoutMessage(getUiStrings(locale).errors.imageEditTimeout);
+      expect(message, locale).toBeTruthy();
+      expect(message, locale).not.toMatch(/free accounts|무료 계정/iu);
+    }
+
+    expect(buildImageEditTimeoutMessage(getUiStrings("fr").errors.imageEditTimeout)).not.toBe(
+      buildImageEditTimeoutMessage(),
+    );
     expect(buildImageEditTimeoutMessage(getUiStrings("ja").errors.imageEditTimeout)).not.toBe(
       buildImageEditTimeoutMessage(),
     );
