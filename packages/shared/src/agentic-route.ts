@@ -756,11 +756,15 @@ function selectProfileId(candidate: unknown, fallback: string, availableProfileI
     ...availableProfileIds.map((profileId) => profileId.trim()).filter(Boolean),
   ]);
   const requested = typeof candidate === "string" ? candidate.trim() : "";
+  const selected = fallback.trim();
+  if (selected && selected !== "default" && profileIds.has(selected)) {
+    return selected;
+  }
   if (requested && profileIds.has(requested)) {
     return requested;
   }
-  if (profileIds.has(fallback)) {
-    return fallback;
+  if (profileIds.has(selected)) {
+    return selected;
   }
   return "default";
 }

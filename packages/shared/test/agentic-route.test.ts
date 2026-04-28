@@ -38,6 +38,32 @@ const input: AgenticRouteInput = {
 };
 
 describe("agentic route plan normalization", () => {
+  test("preserves an explicitly selected non-default profile when the router returns default", () => {
+    const plan = normalizeAgenticRoutePlan(
+      {
+        source: "llm",
+        task: "general",
+        contextRequests: [],
+        selectedProfileId: "default",
+        intent: {
+          summary: "Plan the profile-specific response.",
+          action: "answer",
+          target: "conversation",
+          constraints: [],
+          needsClarification: false,
+        },
+        imageEdit: {
+          shouldEdit: false,
+          target: "none",
+          reason: "No image workflow.",
+        },
+      },
+      input,
+    );
+
+    expect(plan.selectedProfileId).toBe("research-assistant");
+  });
+
   test("keeps model-requested visual context without relying on keyword inference", () => {
     const plan = normalizeAgenticRoutePlan(
       {

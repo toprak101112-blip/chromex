@@ -349,6 +349,26 @@ describe("AppServerCodexPlane", () => {
     });
   });
 
+  test("does not infer account plan type from non-account fields", async () => {
+    const client = new FakeCodexClient({
+      accountReadResult: {
+        account: { type: "apiKey" },
+        planType: "free",
+      },
+    });
+    const plane = new AppServerCodexPlane({
+      client: client as never,
+      harness: harness as never,
+      secrets: new InMemoryBridgeSecrets({ initialOpenAiApiKey: "sk-test" }),
+    });
+
+    await expect(plane.accountStatus()).resolves.toMatchObject({
+      authMode: "apikey",
+      codexAuthenticated: true,
+      planType: null,
+    });
+  });
+
   test("reports Codex account plan type when app-server exposes it", async () => {
     const client = new FakeCodexClient({
       accountReadResult: {
@@ -1211,7 +1231,7 @@ describe("CodexImagePlane", () => {
     );
 
     await plane.startGenerate({
-      prompt: "Create a high quality infographic from the current page.",
+      prompt: "Create an infographic from the current page.",
       contexts: [
         {
           metadata: {
@@ -1231,8 +1251,6 @@ describe("CodexImagePlane", () => {
       ],
       workflow: "infographic",
       model: "gpt-image-2",
-      quality: "high",
-      size: "1024x1536",
     });
 
     const turnStart = client.calls.find((call) => call.method === "turn/start");
@@ -1250,7 +1268,8 @@ describe("CodexImagePlane", () => {
 
     expect(textItem?.text).toContain("Generate a new infographic image");
     expect(textItem?.text).toContain("gpt-image-2");
-    expect(textItem?.text).toContain("Use case: infographic-diagram");
+    expect(textItem?.text).toContain("Use case: infographic");
+    expect(textItem?.text).not.toContain("Render target:");
     expect(textItem?.text).toContain("PRIVATE PAGE CONTEXT");
     expect(textItem?.text).toContain("Do not invent metrics");
     expect(textItem?.text).toContain("use reference chaining");
@@ -1292,6 +1311,108 @@ describe("CodexImagePlane", () => {
     expect(client.calls.find((call) => call.method === "turn/start")).toBeTruthy();
   });
 
+  test("ignores explicit image render parameters for ChatGPT OAuth accounts", async () => {
+    const workspaceRoot = await mkdtemp(join(tmpdir(), "codex-image-generate-chatgpt-params-"));
+    const imageAssets = new BridgeImageAssetStore({
+      outputDir: () => join(workspaceRoot, ".codex-sidepanel", "generated-images"),
+    });
+    const hookPayloads: Array<Record<string, unknown>> = [];
+    const client = new FakeCodexClient({
+      imageEditMode: true,
+      accountReadResult: {
+        account: { type: "chatgpt" },
+      },
+    });
+    const plane = new CodexImagePlane(
+      {
+        runHooks: async (_event: string, _scope: string, payload?: Record<string, unknown>) => {
+          if (payload) {
+            hookPayloads.push(payload);
+          }
+          return { appendPrompt: [] };
+        },
+        resolvePromptInstructions: async () => ({ text: "", sources: [] }),
+        getWorkspaceRoot: async () => workspaceRoot,
+      } as never,
+      { client: client as never, imageAssets },
+    );
+
+    await plane.startGenerate({
+      prompt: "Generate a product concept image.",
+      contexts: [],
+      model: "gpt-image-2",
+      quality: "high",
+      size: "1024x1024",
+    });
+
+    const turnStart = client.calls.find((call) => call.method === "turn/start");
+    const inputItems = Array.isArray(turnStart?.params?.input) ? turnStart.params.input : [];
+    const textItem = inputItems.find(
+      (item): item is { type: "text"; text: string } =>
+        typeof item === "object" &&
+        item !== null &&
+        (item as { type?: unknown }).type === "text" &&
+        typeof (item as { text?: unknown }).text === "string",
+    );
+
+    expect(textItem?.text).not.toContain("Render target:");
+    expect(hookPayloads.find((payload) => payload.mode === "generate")).toMatchObject({
+      quality: null,
+      size: null,
+    });
+  });
+
+  test("preserves explicit image render parameters only for API-key accounts", async () => {
+    const workspaceRoot = await mkdtemp(join(tmpdir(), "codex-image-generate-apikey-params-"));
+    const imageAssets = new BridgeImageAssetStore({
+      outputDir: () => join(workspaceRoot, ".codex-sidepanel", "generated-images"),
+    });
+    const hookPayloads: Array<Record<string, unknown>> = [];
+    const client = new FakeCodexClient({
+      imageEditMode: true,
+      accountReadResult: {
+        account: { type: "apiKey" },
+      },
+    });
+    const plane = new CodexImagePlane(
+      {
+        runHooks: async (_event: string, _scope: string, payload?: Record<string, unknown>) => {
+          if (payload) {
+            hookPayloads.push(payload);
+          }
+          return { appendPrompt: [] };
+        },
+        resolvePromptInstructions: async () => ({ text: "", sources: [] }),
+        getWorkspaceRoot: async () => workspaceRoot,
+      } as never,
+      { client: client as never, imageAssets },
+    );
+
+    await plane.startGenerate({
+      prompt: "Generate a product concept image.",
+      contexts: [],
+      model: "gpt-image-2",
+      quality: "high",
+      size: "1024x1024",
+    });
+
+    const turnStart = client.calls.find((call) => call.method === "turn/start");
+    const inputItems = Array.isArray(turnStart?.params?.input) ? turnStart.params.input : [];
+    const textItem = inputItems.find(
+      (item): item is { type: "text"; text: string } =>
+        typeof item === "object" &&
+        item !== null &&
+        (item as { type?: unknown }).type === "text" &&
+        typeof (item as { text?: unknown }).text === "string",
+    );
+
+    expect(textItem?.text).toContain("Render target: 1024x1024, high quality.");
+    expect(hookPayloads.find((payload) => payload.mode === "generate")).toMatchObject({
+      quality: "high",
+      size: "1024x1024",
+    });
+  });
+
   test("fails image generation early with a clear message for free ChatGPT accounts", async () => {
     const workspaceRoot = await mkdtemp(join(tmpdir(), "codex-image-generate-free-"));
     const imageAssets = new BridgeImageAssetStore({
@@ -1319,6 +1440,37 @@ describe("CodexImagePlane", () => {
       }),
     ).rejects.toThrow("Image generation is not available on free ChatGPT accounts");
     expect(client.calls.find((call) => call.method === "turn/start")).toBeUndefined();
+  });
+
+  test("does not block image generation from non-ChatGPT accounts with unrelated plan fields", async () => {
+    const workspaceRoot = await mkdtemp(join(tmpdir(), "codex-image-generate-apikey-plan-field-"));
+    const imageAssets = new BridgeImageAssetStore({
+      outputDir: () => join(workspaceRoot, ".codex-sidepanel", "generated-images"),
+    });
+    const client = new FakeCodexClient({
+      imageEditMode: true,
+      accountReadResult: {
+        account: { type: "apiKey" },
+        planType: "free",
+      },
+    });
+    const plane = new CodexImagePlane(
+      {
+        runHooks: async () => ({ appendPrompt: [] }),
+        resolvePromptInstructions: async () => ({ text: "", sources: [] }),
+        getWorkspaceRoot: async () => workspaceRoot,
+      } as never,
+      { client: client as never, imageAssets },
+    );
+
+    const result = await plane.startGenerate({
+      prompt: "Generate a product concept image.",
+      contexts: [],
+      model: "gpt-image-2",
+    });
+
+    expect(result.previewRef).toMatch(/^codex-asset:/);
+    expect(client.calls.find((call) => call.method === "turn/start")).toBeTruthy();
   });
 
   test("preserves app-server image generation failures without inferring the account plan from text", async () => {
@@ -1395,8 +1547,6 @@ describe("CodexImagePlane", () => {
       ],
       workflow: "infographic",
       model: "gpt-image-2",
-      quality: "high",
-      size: "1024x1536",
     });
 
     const turnStart = client.calls.find((call) => call.method === "turn/start");
@@ -1432,8 +1582,6 @@ describe("CodexImagePlane", () => {
       prompt: "프롬프트: blue cloud-shaped coding app icon, glossy 3D. 이 프롬프트로 이미지 생성해줘.",
       workflow: "generated-image",
       model: "gpt-image-2",
-      quality: "high",
-      size: "1024x1024",
     });
 
     const turnStart = client.calls.find((call) => call.method === "turn/start");
@@ -1448,6 +1596,7 @@ describe("CodexImagePlane", () => {
 
     expect(textItem?.text).toContain("Generate a new image from the user's request");
     expect(textItem?.text).toContain("Use case: general-image-generation");
+    expect(textItem?.text).not.toContain("Render target:");
     expect(textItem?.text).toContain("execute that prompt as the visual brief");
     expect(textItem?.text).toContain("Reference image unavailable");
     expect(textItem?.text).toContain("repeated design contract");
@@ -1501,8 +1650,6 @@ describe("CodexImagePlane", () => {
         },
       ],
       model: "gpt-image-2",
-      quality: "high",
-      size: "1024x1536",
     });
 
     const turnStart = client.calls.find((call) => call.method === "turn/start");
@@ -1558,8 +1705,6 @@ describe("CodexImagePlane", () => {
         clientRequestId: "slide-req-1",
         workflow: "slide-images",
         model: "gpt-image-2",
-        quality: "high",
-        size: "1536x1024",
       },
       (event) => events.push(event),
     );

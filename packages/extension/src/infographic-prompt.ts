@@ -1,4 +1,4 @@
-import { getPromptOutputLanguageName } from "./ui-language.js";
+import { getTranslatedUiLocale, listSupportedUiLanguageOptions } from "./ui-language.js";
 
 export interface InfographicPromptInput {
   locale: string;
@@ -10,34 +10,25 @@ export interface InfographicPromptInput {
 type InfographicSiteTemplate = "youtube" | "paper" | "news" | "information" | "default";
 
 export function buildInfographicPrompt(input: InfographicPromptInput): string {
-  const outputLanguage = getPromptOutputLanguageName(input.locale);
+  const locale = getInfographicLocaleLabel(input.locale);
   const title = input.pageTitle.trim() || "Current page";
   const url = input.pageUrl.trim() || "unknown URL";
   const siteTemplate = inferInfographicSiteTemplate(input);
+  const siteFocus = createSiteFocusPrompt(siteTemplate);
 
   return [
     "Instructions:",
-    "Use gpt-image-2 to generate exactly one polished infographic image from the attached current-page data.",
-    "Use case: infographic-diagram",
-    "Output target: 1024x1536 vertical poster, high quality, mobile-readable.",
-    `Output language: ${outputLanguage}.`,
-    "Source boundary:",
-    'The page context is attached separately as "PRIVATE PAGE CONTEXT". Use only that current-page DOM/adapter data as source material.',
-    "Do not invent metrics, quotes, product claims, dates, citations, or causal relationships. If exact numbers are unavailable, use qualitative callouts instead of fake numbers.",
-    "Content plan:",
-    "- Extract one clear headline, three to five key insights, and up to one hero statistic only if a real number exists in the source.",
-    "- Prefer compact labels, short captions, timeline/cards/comparison blocks, and visible hierarchy over dense paragraphs.",
-    "- If the page is a video/article/report, show the core story, evidence, and practical takeaway rather than a generic summary.",
-    ...createSiteTemplatePrompt(siteTemplate),
-    "Visual direction:",
-    "- Use readable typography, high contrast, generous whitespace, precise alignment, and clean editorial composition.",
-    "- Use simple chart-like blocks, callouts, arrows, dividers, icons, and section headers where helpful.",
-    "- Keep all in-image text crisp, correctly spelled, and large enough to read on a phone.",
-    "- No watermark, no fake logo, no browser chrome, no UI frame, no decorative filler that hides the information.",
+    "Create a polished infographic image that makes this page easy to understand.",
+    `Locale/culture: ${locale.nativeName} (${locale.locale}). Match the language, cultural context, reading flow, visual metaphors, and tone to this locale/culture.`,
+    "Source:",
+    "Use the attached current-page context as the source of truth.",
+    "Choose the layout, aspect ratio, composition, and visual structure freely based on what best explains this specific page.",
+    siteFocus ? `Page focus: ${siteFocus}` : "",
+    "Do not invent names, numbers, quotes, claims, dates, citations, or logos that are not in the page context.",
     "Page metadata:",
     `Title: ${title}`,
     `URL: ${url}`,
-  ].join("\n");
+  ].filter(Boolean).join("\n");
 }
 
 function inferInfographicSiteTemplate(input: InfographicPromptInput): InfographicSiteTemplate {
@@ -73,43 +64,28 @@ function inferInfographicSiteTemplate(input: InfographicPromptInput): Infographi
   return "default";
 }
 
-function createSiteTemplatePrompt(template: InfographicSiteTemplate): string[] {
+function createSiteFocusPrompt(template: InfographicSiteTemplate): string {
   switch (template) {
     case "youtube":
-      return [
-        "Site template: YouTube video infographic.",
-        "- Build a video storyboard: hook, chapters or timeline, key moments, evidence from transcript/description, and final takeaway.",
-        "- Use timestamp labels only when actual timestamps or current playback time exist in the attached context.",
-        "- Do not invent chapter names, speaker quotes, view counts, or timestamps.",
-      ];
+      return "explain the video through its main story, key moments, and takeaway.";
     case "paper":
-      return [
-        "Site template: research paper infographic.",
-        "- Structure as problem, method, evidence, limitations, and implications.",
-        "- Prefer a visual pipeline, comparison matrix, or concept diagram over a generic summary poster.",
-        "- Do not fabricate experimental results, benchmarks, author claims, equations, citations, or statistical significance.",
-      ];
+      return "explain the paper through problem, method, evidence, result, limitation, and implication.";
     case "news":
-      return [
-        "Site template: news article infographic.",
-        "- Organize the story by who, what, when, where, why, how, then add a concise impact/next-step section.",
-        "- Separate confirmed facts from implications, background, and open questions.",
-        "- Do not add unsourced dates, numbers, quotes, political claims, or causal explanations.",
-      ];
+      return "explain what happened, why it matters, and what to watch next.";
     case "information":
-      return [
-        "Site template: information map infographic.",
-        "- Use taxonomy, process, checklist, comparison, or decision-tree structure based on the page content.",
-        "- Turn scattered page sections into a navigable map with grouped labels and clear next actions.",
-        "- If the page contains a dashboard or report, chart only real values found in the source context.",
-      ];
+      return "turn the page into a simple map, checklist, process, or comparison.";
     case "default":
-      return [
-        "Site template: general page infographic.",
-        "- Choose the clearest structure from summary cards, timeline, comparison, checklist, or concept map.",
-        "- Favor practical takeaways and source-grounded hierarchy over decorative filler.",
-      ];
+      return "choose the clearest structure from summary cards, timeline, comparison, checklist, or concept map.";
   }
+}
+
+function getInfographicLocaleLabel(locale: string): { locale: string; nativeName: string } {
+  const translatedLocale = getTranslatedUiLocale(locale);
+  const option = listSupportedUiLanguageOptions().find((item) => item.locale === translatedLocale);
+  return {
+    locale: translatedLocale,
+    nativeName: option?.nativeName ?? "English",
+  };
 }
 
 function isInformationPlatform(platform: string): boolean {

@@ -162,7 +162,7 @@ export interface ImageEditParams {
     mimeType: string;
     filename?: string;
   }>;
-  size?: "1024x1024" | "1536x1024" | "1024x1536";
+  size?: "auto" | "1024x1024" | "1536x1024" | "1024x1536";
 }
 
 export interface ImageGenerateParams {
@@ -171,6 +171,7 @@ export interface ImageGenerateParams {
   fileAttachments?: UserFileAttachment[];
   conversationContext?: string;
   clientRequestId?: string;
+  conversationId?: string;
   workflow?: "infographic" | "slide-images" | "generated-image";
   model?: string;
   quality?: "low" | "medium" | "high" | "auto";

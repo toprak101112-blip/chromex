@@ -11,6 +11,7 @@ export interface ComposerPrimaryActionDraftInput {
   nextComposerDraft: string;
   currentWorkActive: boolean;
   liveActive: boolean;
+  compositionInProgress?: boolean;
 }
 
 export function resolveComposerPrimaryAction(input: ComposerPrimaryActionInput): ComposerPrimaryAction {
@@ -30,6 +31,10 @@ export function resolveComposerPrimaryAction(input: ComposerPrimaryActionInput):
 }
 
 export function didComposerPrimaryActionChangeForDraftInput(input: ComposerPrimaryActionDraftInput): boolean {
+  if (input.compositionInProgress) {
+    return false;
+  }
+
   const previousAction = resolveComposerPrimaryAction({
     composerDraft: input.previousComposerDraft,
     currentWorkActive: input.currentWorkActive,

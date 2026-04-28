@@ -27,6 +27,10 @@ const DYNAMIC_TEMPLATES = {
   "status.imageFolderOpened": "Opened image folder: {folder}",
   "status.logFolderOpened": "Opened log folder: {folder}",
   "status.rateLimitUsed": "{limitName} {usedPercent}% used, resets {reset}",
+  "prompts.imageAttachmentPromptExtract":
+    "Analyze the attached image{pluralSuffix} ({imageList}) and extract a reusable image-generation prompt. Include subject, composition, style, lighting, colors, typography or text treatment if visible, aspect ratio, negative constraints, and the details needed to recreate the result. Do not generate or edit an image unless I explicitly ask for image generation or editing. Answer in {outputLanguage}.",
+  "prompts.imageAttachmentDescribe":
+    "Describe the attached image{pluralSuffix} ({imageList}). Explain what is visible, important context, notable text, visual hierarchy, and any uncertainty. Answer in {outputLanguage}.",
   "profileEditor.recommendationPlaceholder": "Recommendation {index}",
 };
 
@@ -79,11 +83,35 @@ async function translateEntries(locale, entries) {
 }
 
 async function translateChunk(targetLocale, entries) {
-  const payload = entries.map((entry, index) => `@@${index}@@ ${entry.text}`).join("\n");
+  const protectedEntries = entries.map((entry) => ({
+    ...entry,
+    ...protectTemplatePlaceholders(entry.text),
+  }));
+  const payload = protectedEntries.map((entry, index) => `@@${index}@@ ${entry.text}`).join("\n");
   const translatedText = await requestTranslation(targetLocale, payload);
   const parsed = parseMarkedTranslations(translatedText);
   return Object.fromEntries(
-    entries.map((entry, index) => [entry.key, parsed[index]?.trim() || entry.text]),
+    protectedEntries.map((entry, index) => [
+      entry.key,
+      restoreTemplatePlaceholders(parsed[index]?.trim() || entry.originalText, entry.placeholders),
+    ]),
+  );
+}
+
+function protectTemplatePlaceholders(text) {
+  const placeholders = [];
+  const protectedText = text.replace(/\{[A-Za-z][A-Za-z0-9]*\}/gu, (placeholder) => {
+    const token = `__CHROMEX_PLACEHOLDER_${placeholders.length}__`;
+    placeholders.push({ token, placeholder });
+    return token;
+  });
+  return { text: protectedText, originalText: text, placeholders };
+}
+
+function restoreTemplatePlaceholders(text, placeholders) {
+  return placeholders.reduce(
+    (result, { token, placeholder }) => result.replaceAll(token, placeholder),
+    text,
   );
 }
 

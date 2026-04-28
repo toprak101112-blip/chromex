@@ -15,6 +15,7 @@ import {
   FileText,
   Globe,
   Hand,
+  Image,
   List,
   Menu,
   MessageCircle,
@@ -57,6 +58,7 @@ export type UiIconName =
   | "file-text"
   | "globe"
   | "hand"
+  | "image"
   | "list"
   | "menu"
   | "message"
@@ -97,6 +99,7 @@ const UI_ICON_NODES: Record<UiIconName, IconNode> = {
   "file-text": FileText,
   globe: Globe,
   hand: Hand,
+  image: Image,
   list: List,
   menu: Menu,
   message: MessageCircle,

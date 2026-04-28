@@ -26,6 +26,12 @@ describe("message action rendering", () => {
     expect(sidepanelSource).not.toContain("state.actionStatus = stringsForState().status.messageCopied");
   });
 
+  test("does not disable edit and regenerate just because the composer draft is empty", () => {
+    expect(sidepanelSource).toContain("canStartMessageReplayInteraction");
+    expect(sidepanelSource).toContain("const disabled = canStartMessageReplayInteraction() ? \"\" : \"disabled\"");
+    expect(sidepanelSource).toContain("if (!messageId || !canStartMessageReplayInteraction())");
+  });
+
   test("marks edited user messages so the editor can use a wider layout", () => {
     expect(sidepanelSource).toContain('const editingClass = editing ? "editing" : ""');
     expect(sidepanelSource).toContain('class="message-card ${message.role} ${editingClass} ${voiceClass} ${imageResultClass}"');

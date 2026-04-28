@@ -85,7 +85,6 @@ type ContextCompactionItem = {
 
 type AccountReadResult = {
   account?: { type?: string; planType?: string | null } | null;
-  planType?: string | null;
   requiresOpenaiAuth?: boolean;
 };
 
@@ -129,12 +128,35 @@ function hasAuthenticatedCodexAccount(result: AccountReadResult): boolean {
 }
 
 function getCodexAccountPlanType(result: AccountReadResult): string | null {
-  const planType = result.account?.planType ?? result.planType ?? null;
+  if (result.account?.type !== "chatgpt") {
+    return null;
+  }
+  const planType = result.account.planType ?? null;
   return typeof planType === "string" && planType.trim() ? planType.trim().toLowerCase() : null;
 }
 
 function isFreeCodexAccount(result: AccountReadResult): boolean {
   return getCodexAccountPlanType(result) === "free";
+}
+
+function isApiKeyCodexAccount(result: AccountReadResult): boolean {
+  return result.account?.type === "apiKey";
+}
+
+function normalizeImageEditParamsForAccount(params: ImageEditParams, account: AccountReadResult): ImageEditParams {
+  if (isApiKeyCodexAccount(account)) {
+    return params;
+  }
+  const { size: _size, ...rest } = params;
+  return rest;
+}
+
+function normalizeImageGenerateParamsForAccount(params: ImageGenerateParams, account: AccountReadResult): ImageGenerateParams {
+  if (isApiKeyCodexAccount(account)) {
+    return params;
+  }
+  const { quality: _quality, size: _size, ...rest } = params;
+  return rest;
 }
 
 function createImageGenerationUnavailableForPlanMessage(planType: string | null): string {
@@ -1881,22 +1903,23 @@ export class CodexImagePlane implements BridgeImagePlane {
       if (isFreeCodexAccount(account)) {
         throw new Error(createImageGenerationUnavailableForPlanMessage(getCodexAccountPlanType(account)));
       }
+      const accountParams = normalizeImageEditParamsForAccount(params, account);
 
       await this.#harness.runHooks("ImageEditStart", "image.edit", {
-        prompt: params.prompt,
-        mimeType: params.image.mimeType,
-        filename: params.image.filename ?? null,
-        size: params.size ?? "1024x1024",
+        prompt: accountParams.prompt,
+        mimeType: accountParams.image.mimeType,
+        filename: accountParams.image.filename ?? null,
+        size: accountParams.size ?? null,
       });
 
-      const inputImagePath = await this.#writeInputImage(params.image);
-      const referenceImagePaths = await Promise.all((params.referenceImages ?? []).map((image) => this.#writeInputImage(image)));
+      const inputImagePath = await this.#writeInputImage(accountParams.image);
+      const referenceImagePaths = await Promise.all((accountParams.referenceImages ?? []).map((image) => this.#writeInputImage(image)));
       await this.#record("image.edit.input.ready", {
         jobId,
         inputImagePath,
         referenceImageCount: referenceImagePaths.length,
       });
-      const previewRef = await this.#runCodexImageEdit(params, inputImagePath, referenceImagePaths, jobId);
+      const previewRef = await this.#runCodexImageEdit(accountParams, inputImagePath, referenceImagePaths, jobId);
       this.#jobs.set(jobId, { previewRef, previewRefs: [previewRef] });
       await this.#harness.runHooks("ImageEditComplete", "image.edit", {
         jobId,
@@ -1927,8 +1950,8 @@ export class CodexImagePlane implements BridgeImagePlane {
       promptLength: params.prompt.length,
       contextCount: params.contexts?.length ?? 0,
       model: params.model ?? "gpt-image-2",
-      quality: params.quality ?? "high",
-      size: params.size ?? "1024x1536",
+      quality: params.quality ?? null,
+      size: params.size ?? null,
     });
 
     try {
@@ -1947,16 +1970,17 @@ export class CodexImagePlane implements BridgeImagePlane {
       if (isFreeCodexAccount(account)) {
         throw new Error(createImageGenerationUnavailableForPlanMessage(getCodexAccountPlanType(account)));
       }
+      const accountParams = normalizeImageGenerateParamsForAccount(params, account);
 
       await this.#harness.runHooks("ImageEditStart", "image.edit", {
-        prompt: params.prompt,
+        prompt: accountParams.prompt,
         mode: "generate",
-        model: params.model ?? "gpt-image-2",
-        quality: params.quality ?? "high",
-        size: params.size ?? "1024x1536",
+        model: accountParams.model ?? "gpt-image-2",
+        quality: accountParams.quality ?? null,
+        size: accountParams.size ?? null,
       });
 
-      const previewRefs = await this.#runCodexImageGenerate(params, jobId, emit);
+      const previewRefs = await this.#runCodexImageGenerate(accountParams, jobId, emit);
       const previewRef = previewRefs[0];
       if (!previewRef) {
         throw new Error("Codex completed image generation without returning a generated image preview.");
@@ -2236,9 +2260,8 @@ export class CodexImagePlane implements BridgeImagePlane {
     });
     const imagegenSkill = await this.#findImagegenSkill(cwd ?? "");
     const model = params.model ?? "gpt-image-2";
-    const quality = params.quality ?? "high";
-    const size = params.size ?? "1024x1536";
     const workflow = params.workflow ?? "generated-image";
+    const renderTarget = createImageGenerateRenderTarget(params);
     const preparedFiles = await prepareUserFileAttachments(params.fileAttachments ?? []);
     const conversationContext = params.conversationContext?.trim().slice(0, 8_000) ?? "";
     const tempPaths: string[] = [];
@@ -2261,7 +2284,7 @@ export class CodexImagePlane implements BridgeImagePlane {
             "Requirements:",
             "- Generate a new image, not an edit of a missing input image.",
             `- Image model target: ${model}.`,
-            `- Render target: ${size}, ${quality} quality.`,
+            renderTarget ? `- Render target: ${renderTarget}.` : "",
             `- Use case: ${createImageGenerateUseCase(workflow)}.`,
             "- Treat all attached page data as PRIVATE PAGE CONTEXT and use it only as source material.",
             "- If the generation request contains or references a user-provided prompt, execute that prompt as the visual brief. Do not rewrite it unless the user explicitly asks for prompt text instead of an image.",
@@ -2590,6 +2613,7 @@ function createImageGeneratePreviewEvent(input: {
   imageIndex: number;
 }): BridgeEvent {
   const clientRequestId = input.params.clientRequestId?.trim();
+  const conversationId = input.params.conversationId?.trim();
   const workflow = input.params.workflow;
   return {
     type: "message.image",
@@ -2599,6 +2623,7 @@ function createImageGeneratePreviewEvent(input: {
     previewRef: input.previewRef,
     alt: createImageGeneratePreviewAlt(workflow, input.imageIndex),
     ...(clientRequestId ? { clientRequestId } : {}),
+    ...(conversationId ? { conversationId } : {}),
     ...(workflow ? { workflow } : {}),
     imageIndex: input.imageIndex,
   };
@@ -2626,12 +2651,19 @@ function createImageGenerateWorkflowInstruction(workflow: ImageGenerateParams["w
 
 function createImageGenerateUseCase(workflow: ImageGenerateParams["workflow"]): string {
   if (workflow === "infographic") {
-    return "infographic-diagram";
+    return "infographic";
   }
   if (workflow === "slide-images") {
     return "presentation-slide-images";
   }
   return "general-image-generation";
+}
+
+function createImageGenerateRenderTarget(params: ImageGenerateParams): string {
+  return [
+    params.size,
+    params.quality ? `${params.quality} quality` : "",
+  ].filter(Boolean).join(", ");
 }
 
 function extractImageReferencesFromText(text: string): string[] {

@@ -30,17 +30,22 @@ describe("voice input and live action rendering", () => {
   test("separates dictation from live mode controls", () => {
     expect(sidepanelSource).toContain('id="voice-input-toggle"');
     expect(sidepanelSource).toContain('"live-toggle"');
-    expect(sidepanelSource).toContain('querySelector<HTMLButtonElement>("#live-toggle, #stop-live")');
+    expect(sidepanelSource).toContain("function bindComposerPrimaryActionButton");
+    expect(sidepanelSource).toContain("function toggleRealtimeVoiceFromComposer");
     expect(sidepanelSource).toContain('resolveComposerPrimaryAction');
     expect(sidepanelSource).toContain("didComposerPrimaryActionChangeForDraftInput");
     expect(sidepanelSource).toContain('renderUiIcon("audio-lines")');
     expect(sidepanelSource).not.toContain('id="voice-toggle"');
   });
 
-  test("flushes live/send action swaps synchronously so Enter targets the current composer", () => {
-    expect(normalizedSidepanelSource).toContain(`if (primaryActionChanged) {
+  test("updates live/send action swaps without re-rendering the composer", () => {
+    expect(sidepanelSource).toContain("function syncComposerPrimaryActionButton");
+    expect(normalizedSidepanelSource).not.toContain(`if (primaryActionChanged) {
       renderSync();
       return;
+    }`);
+    expect(normalizedSidepanelSource).toContain(`if (primaryActionChanged) {
+      syncComposerPrimaryActionButton();
     }`);
   });
 

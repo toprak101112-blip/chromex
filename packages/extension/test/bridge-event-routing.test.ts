@@ -51,4 +51,38 @@ describe("resolveBridgeEventConversationId", () => {
       ),
     ).toBe("conversation-c");
   });
+
+  test("routes nested plan, diff, and reroute events by thread id", () => {
+    const resolver = {
+      findConversationIdForThread: (threadId: string) => (threadId === "thread-d" ? "conversation-d" : null),
+    };
+
+    expect(
+      resolveBridgeEventConversationId(
+        {
+          type: "turn.plan.updated",
+          plan: { threadId: "thread-d", turnId: "turn-d", steps: [] },
+        },
+        resolver,
+      ),
+    ).toBe("conversation-d");
+    expect(
+      resolveBridgeEventConversationId(
+        {
+          type: "turn.diff.updated",
+          diff: { threadId: "thread-d", turnId: "turn-d", diff: "changed" },
+        },
+        resolver,
+      ),
+    ).toBe("conversation-d");
+    expect(
+      resolveBridgeEventConversationId(
+        {
+          type: "model.rerouted",
+          reroute: { threadId: "thread-d", turnId: "turn-d", fromModel: "a", toModel: "b" },
+        },
+        resolver,
+      ),
+    ).toBe("conversation-d");
+  });
 });

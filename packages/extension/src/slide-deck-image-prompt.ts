@@ -33,7 +33,7 @@ export function buildSlideDeckImagePrompt(input: SlideDeckImagePromptInput): str
     "- The previous slide reference is for consistent deck design only. Do not copy the previous slide's content, claim, chart, or headline into the next slide unless the storyboard explicitly requires it.",
     "- Save every generated slide image and mention each saved path or image result in order.",
     "Slide design requirements:",
-    "- 16:9 presentation image, high quality, landscape layout, readable on a laptop screen.",
+    "- Aim for a presentation-friendly 16:9 landscape slide unless the user asks for a different format.",
     "- Use large typography, strong hierarchy, clean spacing, consistent visual system, and no tiny paragraphs.",
     "- Each slide should have one clear title, one core message, and only source-grounded supporting evidence.",
     "- Prefer diagrams, process flows, comparison layouts, timelines, and insight cards over generic posters.",

@@ -78,6 +78,63 @@ describe("turn activity rendering", () => {
     expect(sidepanelSource).toContain("state.streamingAssistantMessageIds.clear()");
   });
 
+  test("does not render unresolved or detached conversation events into the visible chat", () => {
+    expect(sidepanelSource).toContain("shouldDropUnresolvedConversationScopedBridgeEvent(event.type, eventConversationId)");
+    expect(sidepanelSource).toContain("bufferUnresolvedConversationScopedBridgeEvent(event)");
+    expect(sidepanelSource).toContain("isConversationScopedBridgeEventType(eventType)");
+    expect(sidepanelSource).toContain('case "message.delta":');
+    expect(sidepanelSource).toContain('case "turn.plan.updated":');
+    expect(sidepanelSource).toContain('case "model.rerouted":');
+    expect(sidepanelSource).toContain("return Boolean(conversationId && (!state.currentConversationId || conversationId === state.currentConversationId))");
+    expect(sidepanelSource).toContain("upsertAssistantMessageForConversation(eventConversationId, itemId, event.delta ?? \"\", true)");
+  });
+
+  test("buffers unresolved thread events so later conversation mapping can persist them", () => {
+    expect(sidepanelSource).toContain("unresolvedConversationBridgeEventsByThreadId");
+    expect(sidepanelSource).toContain("MAX_UNRESOLVED_CONVERSATION_BRIDGE_EVENTS_PER_THREAD");
+    expect(sidepanelSource).toContain("flushBufferedConversationBridgeEvents(normalizedConversationId, normalizedThreadId)");
+    expect(sidepanelSource).toContain("applyBufferedConversationBridgeEvent(conversationId, event)");
+    expect(sidepanelSource).toContain('case "message.completed":');
+    expect(sidepanelSource).toContain("upsertTurnActivityTraceForConversation(conversationId");
+  });
+
+  test("lets the active visible prompt receive streaming before conversation thread mapping catches up", () => {
+    expect(sidepanelSource).toContain("shouldTreatUnresolvedBridgeEventAsCurrent(event, eventConversationId)");
+    expect(sidepanelSource).toContain("unresolvedEventBelongsToCurrentConversation || isBridgeEventForCurrentConversation");
+    expect(sidepanelSource).toContain("rememberCurrentConversationThreadForBridgeEvent(event)");
+    expect(sidepanelSource).toContain("hasCurrentPromptInFlight()");
+    expect(sidepanelSource).toContain("promptSubmissionBootstrapInFlight ||");
+    expect(sidepanelSource).toContain("state.promptActivity ||");
+    expect(sidepanelSource).toContain("if (!threadId) {\n    return true;\n  }");
+  });
+
+  test("claims the first unresolved thread for the current prompt even when the stored thread is stale", () => {
+    expect(sidepanelSource).toContain("getCurrentClaimedBridgeEventThreadId()");
+    expect(sidepanelSource).toContain("const claimedThreadId = getCurrentClaimedBridgeEventThreadId()");
+    expect(sidepanelSource).toContain("if (claimedThreadId) {\n    return threadId === claimedThreadId;\n  }");
+    expect(sidepanelSource).toContain("return Boolean(state.promptActivity || promptSubmissionBootstrapInFlight)");
+  });
+
+  test("routes nested plan, diff, and reroute events by thread before rendering logs", () => {
+    expect(sidepanelSource).toContain("event.plan?.threadId");
+    expect(sidepanelSource).toContain("event.diff?.threadId");
+    expect(sidepanelSource).toContain("event.reroute?.threadId");
+    expect(sidepanelSource).toContain("upsertTurnPlanTraceForConversation(eventConversationId, event.plan)");
+    expect(sidepanelSource).toContain("upsertTurnDiffTraceForConversation(eventConversationId, event.diff)");
+    expect(sidepanelSource).toContain("if (!isCurrentConversationEvent) {\n      renderConversationListIfVisible();\n      return;\n    }\n    state.latestReroute");
+  });
+
+  test("flushes pending streamed deltas before taking a conversation switch snapshot", () => {
+    expect(sidepanelSource).toContain("flushStreamingAssistantDeltas();\n  rememberCurrentConversationSnapshot();");
+  });
+
+  test("keeps background turn traces attached to their conversation for later resume", () => {
+    expect(sidepanelSource).toContain("upsertTurnActivityTraceForConversation(eventConversationId");
+    expect(sidepanelSource).toContain("upsertTurnPlanTraceForConversation(eventConversationId, event.plan)");
+    expect(sidepanelSource).toContain("upsertTurnDiffTraceForConversation(eventConversationId, event.diff)");
+    expect(sidepanelSource).toContain("completeTurnTraceForConversation(eventConversationId, event.threadId, event.turnId ?? \"\")");
+  });
+
   test("keeps Codex work activity in arrival order instead of timestamp-resorting it above prior lines", () => {
     expect(sidepanelSource).toContain("const MAX_TRACE_ITEMS");
     expect(sidepanelSource).not.toContain(".sort((left, right) => left.timestampMs - right.timestampMs)");
@@ -129,6 +186,6 @@ describe("turn activity rendering", () => {
     expect(traceFormattingSource).toContain("isNoisyTraceText");
     expect(traceFormattingSource).toContain("reviewing the request and planning the next step.");
     expect(traceFormattingSource).toContain("preparing the user-facing response.");
-    expect(sidepanelSource).toContain("removeTurnTraceItems(plan.threadId, plan.turnId");
+    expect(sidepanelSource).toContain("removeTurnTraceItemsInMessages(messages, plan.threadId, plan.turnId");
   });
 });

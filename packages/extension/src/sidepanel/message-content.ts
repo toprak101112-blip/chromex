@@ -364,13 +364,25 @@ function renderParagraph(lines: string[], options: RenderMessageContentOptions):
   return `<p>${renderInlineMarkdown(paragraph, options)}</p>`;
 }
 
+function getOrderedListStart(lines: string[]): number {
+  const firstLine = lines.find((line) => line.trim());
+  const match = firstLine ? /^(\d+)[.)]\s+\S/u.exec(firstLine.trim()) : null;
+  const start = match ? Number.parseInt(match[1] ?? "", 10) : 1;
+  return Number.isFinite(start) && start > 0 ? start : 1;
+}
+
 function renderList(lines: string[], ordered: boolean, options: RenderMessageContentOptions): string {
   const items = lines
     .map((line) => line.replace(ordered ? /^\d+[.)]\s+/u : /^(?:[-*+])\s+/u, "").trim())
     .filter(Boolean)
     .map((line) => `<li>${renderInlineMarkdown(line, options)}</li>`)
     .join("");
-  return `<${ordered ? "ol" : "ul"}>${items}</${ordered ? "ol" : "ul"}>`;
+  if (!ordered) {
+    return `<ul>${items}</ul>`;
+  }
+  const start = getOrderedListStart(lines);
+  const startAttribute = start === 1 ? "" : ` start="${start}"`;
+  return `<ol${startAttribute}>${items}</ol>`;
 }
 
 function renderMarkdownBlocks(block: string, options: RenderMessageContentOptions): string {

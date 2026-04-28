@@ -3,21 +3,21 @@ import { describe, expect, test } from "vitest";
 import { buildInfographicPrompt } from "../src/infographic-prompt.js";
 
 describe("buildInfographicPrompt", () => {
-  test("builds a high-quality gpt-image-2 infographic prompt from current page data", () => {
+  test("builds a simple locale-aware infographic prompt from current page data", () => {
     const prompt = buildInfographicPrompt({
       locale: "ko",
       pageTitle: "AI 시장 보고서",
       pageUrl: "https://example.com/report",
     });
 
-    expect(prompt).toContain("gpt-image-2");
-    expect(prompt).toContain("Use case: infographic-diagram");
-    expect(prompt).toContain("1024x1536");
-    expect(prompt).toContain("high quality");
-    expect(prompt).toContain("PRIVATE PAGE CONTEXT");
-    expect(prompt).toContain("Do not invent metrics");
-    expect(prompt).toContain("readable typography");
-    expect(prompt).toContain("Korean");
+    expect(prompt).toContain("Create a polished infographic image that makes this page easy to understand.");
+    expect(prompt).toContain("Locale/culture: 한국어 (ko).");
+    expect(prompt).toContain("Use the attached current-page context as the source of truth.");
+    expect(prompt).toContain("Choose the layout, aspect ratio, composition, and visual structure freely");
+    expect(prompt).toContain("AI 시장 보고서");
+    expect(prompt).not.toContain("gpt-image-2");
+    expect(prompt).not.toContain("1024x1536");
+    expect(prompt).not.toContain("vertical poster");
   });
 
   test("keeps source context separate from generation instructions", () => {
@@ -28,12 +28,12 @@ describe("buildInfographicPrompt", () => {
     });
 
     expect(prompt).toContain("Instructions:");
-    expect(prompt).toContain("Source boundary:");
-    expect(prompt).toContain('The page context is attached separately as "PRIVATE PAGE CONTEXT"');
+    expect(prompt).toContain("Source:");
+    expect(prompt).toContain("Use the attached current-page context as the source of truth.");
     expect(prompt).not.toContain("<script");
   });
 
-  test("uses a video storyboard prompt for YouTube pages", () => {
+  test("uses a concise video focus hint for YouTube pages", () => {
     const prompt = buildInfographicPrompt({
       locale: "ko",
       pageTitle: "State of the Claw",
@@ -41,12 +41,10 @@ describe("buildInfographicPrompt", () => {
       adapterPayload: { platform: "youtube", currentTimeSeconds: 92, transcriptSegments: [] },
     });
 
-    expect(prompt).toContain("Site template: YouTube video infographic");
-    expect(prompt).toContain("chapters or timeline");
-    expect(prompt).toContain("timestamp");
+    expect(prompt).toContain("Page focus: explain the video through its main story, key moments, and takeaway.");
   });
 
-  test("uses a paper explainer prompt for arxiv and PDF research pages", () => {
+  test("uses a concise paper focus hint for arxiv and PDF research pages", () => {
     const prompt = buildInfographicPrompt({
       locale: "en",
       pageTitle: "Attention Is All You Need",
@@ -54,12 +52,10 @@ describe("buildInfographicPrompt", () => {
       adapterPayload: { platform: "arxiv", arxivId: "1706.03762" },
     });
 
-    expect(prompt).toContain("Site template: research paper infographic");
-    expect(prompt).toContain("problem, method, evidence, limitations");
-    expect(prompt).toContain("Do not fabricate experimental results");
+    expect(prompt).toContain("Page focus: explain the paper through problem, method, evidence, result, limitation, and implication.");
   });
 
-  test("uses a news article prompt for news pages", () => {
+  test("uses a concise news focus hint for news pages", () => {
     const prompt = buildInfographicPrompt({
       locale: "ko",
       pageTitle: "속보 기사",
@@ -67,12 +63,10 @@ describe("buildInfographicPrompt", () => {
       adapterPayload: { platform: "news", region: "kr" },
     });
 
-    expect(prompt).toContain("Site template: news article infographic");
-    expect(prompt).toContain("who, what, when, where, why, how");
-    expect(prompt).toMatch(/separate confirmed facts from implications/iu);
+    expect(prompt).toContain("Page focus: explain what happened, why it matters, and what to watch next.");
   });
 
-  test("uses an information-architecture prompt for reference and work pages", () => {
+  test("uses a concise information focus hint for reference and work pages", () => {
     const prompt = buildInfographicPrompt({
       locale: "en",
       pageTitle: "Project workspace",
@@ -80,8 +74,6 @@ describe("buildInfographicPrompt", () => {
       adapterPayload: { platform: "notion" },
     });
 
-    expect(prompt).toContain("Site template: information map infographic");
-    expect(prompt).toContain("taxonomy, process, checklist, comparison");
-    expect(prompt).toMatch(/turn scattered page sections into a navigable map/iu);
+    expect(prompt).toContain("Page focus: turn the page into a simple map, checklist, process, or comparison.");
   });
 });

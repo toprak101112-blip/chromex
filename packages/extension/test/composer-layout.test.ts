@@ -57,6 +57,15 @@ describe("composer layout css", () => {
     expect(readFinalDeclaration(".file-chip-preview img", "height")).toBe("40px");
   });
 
+  test("keeps long file attachment names inside the composer chip bounds", () => {
+    expect(readFinalDeclaration(".file-chip", "min-width")).toBe("0");
+    expect(readFinalDeclaration(".composer-file-list .file-chip", "flex")).toBe("0 1 auto");
+    expect(readFinalDeclaration(".file-chip-label", "min-width")).toBe("0");
+    expect(readFinalDeclaration(".file-chip-label", "overflow")).toBe("hidden");
+    expect(readFinalDeclaration(".file-chip-label", "text-overflow")).toBe("ellipsis");
+    expect(readFinalDeclaration(".file-chip-label", "white-space")).toBe("nowrap");
+  });
+
   test("renders fenced code blocks as bordered cards with a header copy action", () => {
     expect(readFinalDeclaration(".message-code-block", "overflow")).toBe("hidden");
     expect(readFinalDeclaration(".message-code-header", "display")).toBe("flex");

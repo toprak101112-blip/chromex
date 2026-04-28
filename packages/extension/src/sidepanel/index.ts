@@ -22,7 +22,10 @@ import {
 } from "@codex-sidepanel/shared";
 
 import { shouldInterceptComposerDropdownOnEnter, shouldSubmitComposerOnKeydown } from "./composer-submit.js";
+import { createSubmittedComposerFileAttachmentState } from "./composer-attachment-submit.js";
 import { createPendingComposerDraftState, createRestoredComposerDraftState } from "./composer-draft.js";
+import { getDroppedFiles, hasComposerDropPayload } from "./composer-drop.js";
+import { isTextFirstActionCard } from "./action-card-routing.js";
 import { calculateComposerTextareaAutosize } from "./composer-textarea-autosize.js";
 import { canSendComposerMessage } from "./composer-send-guard.js";
 import {
@@ -85,6 +88,7 @@ import {
 import {
   createAttachmentFingerprint,
   createFileChipLabel,
+  createImageAttachmentPreviewSrc,
   createRemoteImageAttachment,
   extractWebImageUrlsFromDropData,
   MAX_FILE_ATTACHMENTS,
@@ -110,6 +114,11 @@ import {
   getSuggestionCardSource,
   mergeProfileAndSiteSuggestionCards,
 } from "./profile-suggestions.js";
+import {
+  createImageAttachmentSuggestionCards,
+  IMAGE_ATTACHMENT_DESCRIBE_ACTION_ID,
+  IMAGE_ATTACHMENT_PROMPT_EXTRACT_ACTION_ID,
+} from "./image-attachment-suggestions.js";
 import { parseVoiceNavigationCommand } from "./voice-commands.js";
 import { shouldAutoReconnectVoice } from "./voice-reconnect.js";
 import { shouldInterruptVoiceOutputForTranscript } from "./voice-barge-in.js";
@@ -330,6 +339,42 @@ type OnlineImagePromptExtraction = {
   attachment?: UserFileAttachment;
 };
 
+type SidepanelBridgeEvent = {
+  type: string;
+  itemId?: string;
+  delta?: string;
+  text?: string;
+  previewRef?: string;
+  alt?: string;
+  sdp?: string;
+  role?: string;
+  item?: Record<string, unknown>;
+  sessionId?: string | null;
+  transport?: "webrtc" | "websocket";
+  audio?: RealtimeOutputAudioChunk;
+  message?: string;
+  reason?: string | null;
+  threadId?: string;
+  turnId?: string;
+  activeTurn?: CodexActiveTurn;
+  phase?: PromptActivityPhase;
+  clientRequestId?: string;
+  workflow?: unknown;
+  imageIndex?: unknown;
+  attempt?: number;
+  maxAttempts?: number;
+  rateLimits?: CodexRateLimits | null;
+  plan?: CodexTurnPlan;
+  diff?: CodexTurnDiff;
+  reroute?: CodexModelReroute;
+  kind?: ConversationMessageTraceItem["kind"];
+  title?: string;
+  detail?: string;
+  status?: "running" | "completed";
+  timestampMs?: number;
+  conversationId?: string;
+};
+
 type PendingVoiceAnswer = {
   resolve: (sdp: string) => void;
   reject: (error: Error) => void;
@@ -532,8 +577,11 @@ const assistantResponseGroupKeysByItemId = new Map<string, string>();
 const assistantResponseGroupKeysByTurnKey = new Map<string, string>();
 const assistantResponseItemOrderByMessageId = new Map<string, string[]>();
 const assistantResponseItemTextsByMessageId = new Map<string, Map<string, string>>();
+const unresolvedConversationBridgeEventsByThreadId = new Map<string, SidepanelBridgeEvent[]>();
 const profileQuestionStreamBuffers = new Map<string, string>();
+let profileQuestionCardRenderRequested = false;
 let contextCompactionNoticeCounter = 0;
+const MAX_UNRESOLVED_CONVERSATION_BRIDGE_EVENTS_PER_THREAD = 200;
 
 const rootElement = document.querySelector<HTMLDivElement>("#app");
 if (!rootElement) {
@@ -729,6 +777,8 @@ let nativeConfirmationResolver: ((approved: boolean) => void) | null = null;
 let initializePromise: Promise<void> | null = null;
 let initializeQueued = false;
 let composerCompositionInProgress = false;
+let composerCompositionStartDraft = "";
+let renderDeferredDuringComposerComposition = false;
 let smokeDryRunSubmissions: string[] = [];
 let promptSubmissionBootstrapInFlight = false;
 let chatScrollUserOverrideUntil = 0;
@@ -763,7 +813,10 @@ const streamingDeltaBuffer = createStreamingDeltaBuffer(
       }
     }
     if (state.activeView === "chat") {
-      if (!patchStreamingAssistantMessageDoms(messageIds)) {
+      if (profileQuestionCardRenderRequested) {
+        profileQuestionCardRenderRequested = false;
+        render();
+      } else if (!patchStreamingAssistantMessageDoms(messageIds)) {
         render();
       }
     }
@@ -808,51 +861,47 @@ chrome.runtime.onMessage.addListener((message) => {
     return;
   }
 
+  if (message.type === "ui.image-attachment.pending") {
+    void takePendingContextMenuImageAttachment();
+    return;
+  }
+
+  if (message.type === "ui.context-menu-action.pending") {
+    void takePendingContextMenuAction();
+    return;
+  }
+
   if (message.type !== "bridge.event") {
     return;
   }
 
-  const event = message.event as {
-    type: string;
-    itemId?: string;
-    delta?: string;
-    text?: string;
-    previewRef?: string;
-    alt?: string;
-    sdp?: string;
-    role?: string;
-    item?: Record<string, unknown>;
-    sessionId?: string | null;
-    transport?: "webrtc" | "websocket";
-    audio?: RealtimeOutputAudioChunk;
-    message?: string;
-    reason?: string | null;
-    threadId?: string;
-    turnId?: string;
-    activeTurn?: CodexActiveTurn;
-    phase?: PromptActivityPhase;
-    clientRequestId?: string;
-    workflow?: unknown;
-    imageIndex?: unknown;
-    attempt?: number;
-    maxAttempts?: number;
-    rateLimits?: CodexRateLimits | null;
-    plan?: CodexTurnPlan;
-    diff?: CodexTurnDiff;
-    reroute?: CodexModelReroute;
-    kind?: ConversationMessageTraceItem["kind"];
-    title?: string;
-    detail?: string;
-    status?: "running" | "completed";
-    timestampMs?: number;
-    conversationId?: string;
-  };
+  const event = message.event as SidepanelBridgeEvent;
   let shouldRender = false;
   const eventConversationId = resolveBridgeEventConversationId(event);
-  const isCurrentConversationEvent = isBridgeEventForCurrentConversation(eventConversationId);
+  const unresolvedEventBelongsToCurrentConversation = shouldTreatUnresolvedBridgeEventAsCurrent(event, eventConversationId);
+  if (unresolvedEventBelongsToCurrentConversation) {
+    rememberCurrentConversationThreadForBridgeEvent(event);
+  }
+  const isCurrentConversationEvent =
+    unresolvedEventBelongsToCurrentConversation || isBridgeEventForCurrentConversation(eventConversationId, event.type);
+  if (
+    !unresolvedEventBelongsToCurrentConversation &&
+    shouldDropUnresolvedConversationScopedBridgeEvent(event.type, eventConversationId)
+  ) {
+    bufferUnresolvedConversationScopedBridgeEvent(event);
+    return;
+  }
 
   if (event.type === "message.delta") {
     if (!isCurrentConversationEvent) {
+      if (eventConversationId) {
+        const itemId = event.itemId ?? "assistant";
+        upsertAssistantMessageForConversation(eventConversationId, itemId, event.delta ?? "", true);
+        const streamingIds = streamingAssistantMessageIdsByConversationId.get(eventConversationId) ?? new Set<string>();
+        streamingIds.add(itemId);
+        streamingAssistantMessageIdsByConversationId.set(eventConversationId, streamingIds);
+        renderConversationListIfVisible();
+      }
       return;
     }
     const itemId = event.itemId ?? "assistant";
@@ -872,14 +921,15 @@ chrome.runtime.onMessage.addListener((message) => {
   }
   if (event.type === "message.completed") {
     const itemId = event.itemId ?? "assistant";
-    const messageId = resolveAssistantResponseMessageId(itemId, event);
     if (!isCurrentConversationEvent && eventConversationId) {
       upsertAssistantMessageForConversation(eventConversationId, itemId, event.text ?? "", false);
+      completeTurnTraceForConversation(eventConversationId, event.threadId ?? "", event.turnId ?? "");
       clearConversationActivity(eventConversationId);
       renderConversationListIfVisible();
       void persistDetachedConversation(eventConversationId);
       return;
     }
+    const messageId = resolveAssistantResponseMessageId(itemId, event);
     flushStreamingAssistantDeltas();
     if (
       shouldClearPromptActivityOnMessageCompleted({
@@ -903,7 +953,6 @@ chrome.runtime.onMessage.addListener((message) => {
     shouldRender = state.activeView === "chat";
   }
   if (event.type === "message.image" && event.previewRef) {
-    flushStreamingAssistantDeltas();
     if (!isCurrentConversationEvent && eventConversationId) {
       renderConversationListIfVisible();
       void hydrateImageForDetachedConversation({
@@ -914,6 +963,7 @@ chrome.runtime.onMessage.addListener((message) => {
       });
       return;
     }
+    flushStreamingAssistantDeltas();
     const workflow = normalizeImageGenerateWorkflow(event.workflow);
     const imageIndex = Number(event.imageIndex);
     void handleBridgeImageEvent({
@@ -941,6 +991,7 @@ chrome.runtime.onMessage.addListener((message) => {
     if (!state.promptActivity || !event.clientRequestId || state.promptActivity.clientRequestId === event.clientRequestId) {
       streamingDeltaBuffer.clear();
       profileQuestionStreamBuffers.clear();
+      profileQuestionCardRenderRequested = false;
       state.messages = state.messages.filter((message) => !state.streamingAssistantMessageIds.has(message.id));
       state.streamingAssistantMessageIds.clear();
       state.activeTurn = null;
@@ -1026,12 +1077,14 @@ chrome.runtime.onMessage.addListener((message) => {
   }
   if (event.type === "turn.completed" && event.threadId) {
     if (!isCurrentConversationEvent && eventConversationId) {
+      completeTurnTraceForConversation(eventConversationId, event.threadId, event.turnId ?? "");
       activeTurnsByConversationId.delete(eventConversationId);
       promptActivitiesByConversationId.delete(eventConversationId);
       activePromptUserMessageIdsByConversationId.delete(eventConversationId);
       streamingAssistantMessageIdsByConversationId.delete(eventConversationId);
-      conversationThreadIdsById.set(eventConversationId, event.threadId);
+      rememberConversationThreadId(eventConversationId, event.threadId);
       renderConversationListIfVisible();
+      void persistDetachedConversation(eventConversationId);
       return;
     }
     flushStreamingAssistantDeltas();
@@ -1063,7 +1116,7 @@ chrome.runtime.onMessage.addListener((message) => {
   if (event.type === "turn.started" && event.activeTurn) {
     if (!isCurrentConversationEvent && eventConversationId) {
       activeTurnsByConversationId.set(eventConversationId, event.activeTurn);
-      conversationThreadIdsById.set(eventConversationId, event.activeTurn.threadId);
+      rememberConversationThreadId(eventConversationId, event.activeTurn.threadId);
       const activity = promotePromptActivityForAssistantProgress({
         current: promptActivitiesByConversationId.get(eventConversationId) ?? null,
         activeTurn: event.activeTurn,
@@ -1123,11 +1176,19 @@ chrome.runtime.onMessage.addListener((message) => {
     }
   }
   if (event.type === "context.compaction.started") {
+    if (!isCurrentConversationEvent) {
+      renderConversationListIfVisible();
+      return;
+    }
     upsertContextCompactionNotice(createContextCompactionNoticeKey(event), "running");
     scheduleConversationPersist();
     shouldRender = state.activeView === "chat";
   }
   if (event.type === "context.compaction.completed") {
+    if (!isCurrentConversationEvent) {
+      renderConversationListIfVisible();
+      return;
+    }
     if (state.promptActivity?.phase === "compacting") {
       state.promptActivity = null;
     }
@@ -1142,7 +1203,17 @@ chrome.runtime.onMessage.addListener((message) => {
         threadId: event.threadId,
         turnId: event.turnId,
       });
-      conversationThreadIdsById.set(eventConversationId, event.threadId);
+      rememberConversationThreadId(eventConversationId, event.threadId);
+      upsertTurnActivityTraceForConversation(eventConversationId, {
+        threadId: event.threadId,
+        turnId: event.turnId,
+        itemId: event.itemId ?? `activity-${Date.now()}`,
+        kind: normalizeTraceEventKind(event.kind),
+        title: event.title ?? "",
+        detail: event.detail ?? "",
+        status: event.status === "completed" ? "completed" : "running",
+        timestampMs: Number.isFinite(event.timestampMs) ? Number(event.timestampMs) : Date.now(),
+      });
       renderConversationListIfVisible();
       return;
     }
@@ -1177,11 +1248,27 @@ chrome.runtime.onMessage.addListener((message) => {
     shouldRender = state.activeView === "chat";
   }
   if (event.type === "turn.plan.updated" && event.plan) {
+    if (!isCurrentConversationEvent) {
+      if (eventConversationId) {
+        rememberConversationThreadId(eventConversationId, event.plan.threadId);
+        upsertTurnPlanTraceForConversation(eventConversationId, event.plan);
+      }
+      renderConversationListIfVisible();
+      return;
+    }
     state.latestPlan = event.plan;
     upsertTurnPlanTrace(event.plan);
     shouldRender = state.activeView === "workspace" || state.activeView === "chat";
   }
   if (event.type === "turn.diff.updated" && event.diff) {
+    if (!isCurrentConversationEvent) {
+      if (eventConversationId) {
+        rememberConversationThreadId(eventConversationId, event.diff.threadId);
+        upsertTurnDiffTraceForConversation(eventConversationId, event.diff);
+      }
+      renderConversationListIfVisible();
+      return;
+    }
     state.latestDiff = event.diff;
     upsertTurnDiffTrace(event.diff);
     shouldRender = state.activeView === "workspace" || state.activeView === "chat";
@@ -1191,6 +1278,10 @@ chrome.runtime.onMessage.addListener((message) => {
     shouldRender = state.activeView === "workspace";
   }
   if (event.type === "model.rerouted" && event.reroute) {
+    if (!isCurrentConversationEvent) {
+      renderConversationListIfVisible();
+      return;
+    }
     state.latestReroute = event.reroute;
     shouldRender = state.activeView !== "context";
   }
@@ -1226,7 +1317,19 @@ async function installActiveTabImagePromptExtractor(): Promise<void> {
   if (!state.currentPageSupport.available) {
     return;
   }
-  await sendRuntimeMessage({ type: "page.image-prompt-hover.install" }).catch(() => undefined);
+  const response = await sendRuntimeMessage<Record<string, unknown>>({ type: "page.image-prompt-hover.install" }).catch(
+    () => null,
+  );
+  const permissionPlan = response ? getPermissionRequestForRuntimeResponse(response) : null;
+  if (!permissionPlan) {
+    return;
+  }
+  state.pendingPermission = {
+    plan: permissionPlan,
+    errorMessage: "",
+  };
+  state.actionStatus = "";
+  render();
 }
 
 async function takePendingOnlineImagePromptExtraction(): Promise<void> {
@@ -1238,16 +1341,105 @@ async function takePendingOnlineImagePromptExtraction(): Promise<void> {
   }
 }
 
+async function takePendingContextMenuImageAttachment(): Promise<void> {
+  const result = await sendRuntimeMessage<{ attachment?: unknown }>({
+    type: "image.attachment.pending.take",
+  }).catch(() => null);
+  const attachment = createContextMenuImageAttachment(result?.attachment);
+  if (!attachment) {
+    return;
+  }
+
+  const plan = planAttachmentSelection(state.fileAttachments, [attachment]);
+  const acceptedFingerprints = new Set(plan.accepted.map((item) => createAttachmentFingerprint(item)));
+  const acceptedAttachments = [attachment].filter((item) => acceptedFingerprints.has(createAttachmentFingerprint(item)));
+  state.activeView = "chat";
+  state.fileAttachments = [...state.fileAttachments, ...acceptedAttachments];
+  state.actionStatus = summarizeRejectedFiles(plan.rejected, stringsForState());
+  render();
+}
+
+type PendingContextMenuAction = "summarize-page" | "summarize-video";
+
+async function takePendingContextMenuAction(): Promise<void> {
+  const result = await sendRuntimeMessage<{ action?: unknown }>({
+    type: "context.menu.pending.take",
+  }).catch(() => null);
+  const action = normalizePendingContextMenuAction(result?.action);
+  if (!action) {
+    return;
+  }
+  await handleActionCard(action);
+}
+
+function normalizePendingContextMenuAction(value: unknown): PendingContextMenuAction | null {
+  return value === "summarize-page" || value === "summarize-video" ? value : null;
+}
+
+function createContextMenuImageAttachment(value: unknown): UserFileAttachment | null {
+  if (!value || typeof value !== "object") {
+    return null;
+  }
+  const input = value as Record<string, unknown>;
+  const imageUrl = typeof input.imageUrl === "string" ? input.imageUrl.trim() : "";
+  if (isHttpUrl(imageUrl)) {
+    return createRemoteImageAttachment(imageUrl);
+  }
+  const dataUrl = parseContextMenuImageDataUrl(imageUrl);
+  if (!dataUrl) {
+    return null;
+  }
+  return {
+    id: `context-menu-image-${Date.now()}`,
+    name: `context-menu-image.${extensionForImageMimeType(dataUrl.mimeType)}`,
+    mimeType: dataUrl.mimeType,
+    sizeBytes: estimateBase64ByteLength(dataUrl.base64),
+    lastModified: Date.now(),
+    base64: dataUrl.base64,
+    kind: "image",
+  };
+}
+
+function parseContextMenuImageDataUrl(value: string): { mimeType: string; base64: string } | null {
+  const match = /^data:(image\/[a-z0-9.+-]+);base64,([a-z0-9+/=\s]+)$/iu.exec(value.trim());
+  if (!match?.[1] || !match[2]) {
+    return null;
+  }
+  return {
+    mimeType: match[1],
+    base64: match[2].replace(/\s+/gu, ""),
+  };
+}
+
+function extensionForImageMimeType(mimeType: string): string {
+  return mimeType === "image/jpeg" || mimeType === "image/jpg"
+    ? "jpg"
+    : mimeType === "image/webp"
+      ? "webp"
+      : mimeType === "image/gif"
+        ? "gif"
+        : "png";
+}
+
+function estimateBase64ByteLength(base64: string): number {
+  const normalized = base64.replace(/\s+/gu, "");
+  if (!normalized) {
+    return 0;
+  }
+  const padding = normalized.endsWith("==") ? 2 : normalized.endsWith("=") ? 1 : 0;
+  return Math.max(0, Math.floor((normalized.length * 3) / 4) - padding);
+}
+
 function normalizeOnlineImagePromptExtraction(value: unknown): OnlineImagePromptExtraction | null {
   if (!value || typeof value !== "object") {
     return null;
   }
   const input = value as Record<string, unknown>;
   const imageUrl = typeof input.imageUrl === "string" ? input.imageUrl.trim() : "";
-  if (!isHttpUrl(imageUrl)) {
+  const attachment = normalizeOnlineImagePromptAttachment(input.attachment);
+  if (!isSupportedImagePromptSource(imageUrl) || !(attachment || isHttpUrl(imageUrl))) {
     return null;
   }
-  const attachment = normalizeOnlineImagePromptAttachment(input.attachment);
   return {
     imageUrl,
     ...(attachment ? { attachment } : {}),
@@ -1292,6 +1484,11 @@ function isHttpUrl(value: string): boolean {
   }
 }
 
+function isSupportedImagePromptSource(value: string): boolean {
+  const normalized = value.trim().toLowerCase();
+  return isHttpUrl(value) || normalized.startsWith("blob:") || normalized.startsWith("data:image/");
+}
+
 async function handleOnlineImagePromptExtraction(value: unknown): Promise<void> {
   const extraction = normalizeOnlineImagePromptExtraction(value);
   if (!extraction) {
@@ -1302,7 +1499,10 @@ async function handleOnlineImagePromptExtraction(value: unknown): Promise<void> 
     ...extraction,
     responseLanguage: state.uiLocale || getBrowserUiLanguage(),
   });
-  const attachment = extraction.attachment ?? createRemoteImageAttachment(extraction.imageUrl);
+  const attachment = extraction.attachment ?? (isHttpUrl(extraction.imageUrl) ? createRemoteImageAttachment(extraction.imageUrl) : null);
+  if (!attachment) {
+    return;
+  }
   await startNewChat();
   if (!canSendCurrentComposerMessage(prompt)) {
     state.composerDraft = prompt;
@@ -1382,6 +1582,8 @@ async function initialize(): Promise<void> {
     renderSync();
     void installActiveTabImagePromptExtractor();
     void takePendingOnlineImagePromptExtraction();
+    void takePendingContextMenuImageAttachment();
+    void takePendingContextMenuAction();
     if (state.attachments.has("open-tabs") || state.selectedTabIds.length) {
       await loadTabs();
     }
@@ -1410,10 +1612,12 @@ function scheduleInitialize(): Promise<void> {
 }
 
 function hydrateConversation(conversation: SavedConversation | null): void {
+  flushStreamingAssistantDeltas();
   rememberCurrentConversationSnapshot();
   resetVoiceTranscriptMirrorState(voiceTranscriptMirror);
   streamingDeltaBuffer.clear();
   profileQuestionStreamBuffers.clear();
+  profileQuestionCardRenderRequested = false;
   state.streamingAssistantMessageIds.clear();
   state.pendingProfileQuestion = null;
   const normalized = normalizePanelConversation(conversation);
@@ -1457,7 +1661,7 @@ function rememberCurrentConversationSnapshot(): void {
   conversationProfilesById.set(state.currentConversationId, state.selectedProfileId || DEFAULT_PROFILE_ID);
   conversationModelsById.set(state.currentConversationId, state.selectedModel || undefined);
   if (state.threadId) {
-    conversationThreadIdsById.set(state.currentConversationId, state.threadId);
+    rememberConversationThreadId(state.currentConversationId, state.threadId);
   }
   if (state.promptActivity) {
     promptActivitiesByConversationId.set(state.currentConversationId, state.promptActivity);
@@ -1488,9 +1692,117 @@ function rememberConversationMetadata(conversation: SavedConversation): void {
   conversationProfilesById.set(conversation.id, conversation.profileId || DEFAULT_PROFILE_ID);
   conversationModelsById.set(conversation.id, conversation.model);
   if (conversation.threadId) {
-    conversationThreadIdsById.set(conversation.id, conversation.threadId);
+    rememberConversationThreadId(conversation.id, conversation.threadId);
   }
   conversationMessagesById.set(conversation.id, cloneConversationMessages(conversation.messages));
+}
+
+function rememberConversationThreadId(conversationId: string, threadId: string | undefined): void {
+  const normalizedConversationId = conversationId.trim();
+  const normalizedThreadId = threadId?.trim() ?? "";
+  if (!normalizedConversationId || !normalizedThreadId) {
+    return;
+  }
+  conversationThreadIdsById.set(normalizedConversationId, normalizedThreadId);
+  flushBufferedConversationBridgeEvents(normalizedConversationId, normalizedThreadId);
+}
+
+function bufferUnresolvedConversationScopedBridgeEvent(event: SidepanelBridgeEvent): void {
+  const threadId = getBridgeEventThreadId(event);
+  if (!threadId) {
+    return;
+  }
+  const events = unresolvedConversationBridgeEventsByThreadId.get(threadId) ?? [];
+  events.push({ ...event });
+  if (events.length > MAX_UNRESOLVED_CONVERSATION_BRIDGE_EVENTS_PER_THREAD) {
+    events.splice(0, events.length - MAX_UNRESOLVED_CONVERSATION_BRIDGE_EVENTS_PER_THREAD);
+  }
+  unresolvedConversationBridgeEventsByThreadId.set(threadId, events);
+}
+
+function flushBufferedConversationBridgeEvents(conversationId: string, threadId: string): void {
+  const events = unresolvedConversationBridgeEventsByThreadId.get(threadId);
+  if (!events?.length) {
+    return;
+  }
+  unresolvedConversationBridgeEventsByThreadId.delete(threadId);
+  for (const event of events) {
+    applyBufferedConversationBridgeEvent(conversationId, event);
+  }
+  renderConversationListIfVisible();
+}
+
+function applyBufferedConversationBridgeEvent(conversationId: string, event: SidepanelBridgeEvent): void {
+  switch (event.type) {
+    case "message.delta": {
+      upsertAssistantMessageForConversation(conversationId, event.itemId ?? "assistant", event.delta ?? "", true);
+      break;
+    }
+    case "message.completed": {
+      upsertAssistantMessageForConversation(conversationId, event.itemId ?? "assistant", event.text ?? "", false);
+      completeTurnTraceForConversation(conversationId, event.threadId ?? "", event.turnId ?? "");
+      clearConversationActivity(conversationId);
+      void persistDetachedConversation(conversationId);
+      break;
+    }
+    case "turn.started": {
+      if (event.activeTurn) {
+        activeTurnsByConversationId.set(conversationId, event.activeTurn);
+      }
+      break;
+    }
+    case "turn.completed": {
+      completeTurnTraceForConversation(conversationId, event.threadId ?? "", event.turnId ?? "");
+      clearConversationActivity(conversationId);
+      void persistDetachedConversation(conversationId);
+      break;
+    }
+    case "turn.activity": {
+      if (!event.threadId || !event.turnId) {
+        break;
+      }
+      activeTurnsByConversationId.set(conversationId, {
+        threadId: event.threadId,
+        turnId: event.turnId,
+      });
+      upsertTurnActivityTraceForConversation(conversationId, {
+        threadId: event.threadId,
+        turnId: event.turnId,
+        itemId: event.itemId ?? `activity-${Date.now()}`,
+        kind: normalizeTraceEventKind(event.kind),
+        title: event.title ?? "",
+        detail: event.detail ?? "",
+        status: event.status === "completed" ? "completed" : "running",
+        timestampMs: Number.isFinite(event.timestampMs) ? Number(event.timestampMs) : Date.now(),
+      });
+      break;
+    }
+    case "turn.plan.updated": {
+      if (event.plan) {
+        upsertTurnPlanTraceForConversation(conversationId, event.plan);
+      }
+      break;
+    }
+    case "turn.diff.updated": {
+      if (event.diff) {
+        upsertTurnDiffTraceForConversation(conversationId, event.diff);
+      }
+      break;
+    }
+    default:
+      break;
+  }
+}
+
+function getBridgeEventThreadId(event: SidepanelBridgeEvent): string {
+  return (
+    event.threadId ??
+    event.activeTurn?.threadId ??
+    event.plan?.threadId ??
+    event.diff?.threadId ??
+    event.reroute?.threadId ??
+    ""
+  ).trim();
 }
 
 function cloneConversationMessages(messages: ConversationMessage[]): ConversationMessage[] {
@@ -1510,6 +1822,9 @@ function resolveBridgeEventConversationId(event: {
   clientRequestId?: string;
   threadId?: string;
   activeTurn?: CodexActiveTurn;
+  plan?: { threadId?: string };
+  diff?: { threadId?: string };
+  reroute?: { threadId?: string };
 }): string | null {
   if (event.conversationId?.trim()) {
     return event.conversationId.trim();
@@ -1520,7 +1835,12 @@ function resolveBridgeEventConversationId(event: {
       return conversationId;
     }
   }
-  const threadId = event.threadId ?? event.activeTurn?.threadId;
+  const threadId =
+    event.threadId ??
+    event.activeTurn?.threadId ??
+    event.plan?.threadId ??
+    event.diff?.threadId ??
+    event.reroute?.threadId;
   if (threadId) {
     for (const [conversationId, candidateThreadId] of conversationThreadIdsById.entries()) {
       if (candidateThreadId === threadId) {
@@ -1531,8 +1851,87 @@ function resolveBridgeEventConversationId(event: {
   return null;
 }
 
-function isBridgeEventForCurrentConversation(conversationId: string | null): boolean {
+function isBridgeEventForCurrentConversation(conversationId: string | null, eventType = ""): boolean {
+  if (isConversationScopedBridgeEventType(eventType)) {
+    return Boolean(conversationId && (!state.currentConversationId || conversationId === state.currentConversationId));
+  }
   return !conversationId || !state.currentConversationId || conversationId === state.currentConversationId;
+}
+
+function shouldDropUnresolvedConversationScopedBridgeEvent(eventType: string, conversationId: string | null): boolean {
+  return isConversationScopedBridgeEventType(eventType) && !conversationId;
+}
+
+function shouldTreatUnresolvedBridgeEventAsCurrent(
+  event: SidepanelBridgeEvent,
+  conversationId: string | null,
+): boolean {
+  if (conversationId || !state.currentConversationId || !isConversationScopedBridgeEventType(event.type)) {
+    return false;
+  }
+  if (!hasCurrentPromptInFlight()) {
+    return false;
+  }
+  const threadId = getBridgeEventThreadId(event);
+  if (!threadId) {
+    return true;
+  }
+  const claimedThreadId = getCurrentClaimedBridgeEventThreadId();
+  if (claimedThreadId) {
+    return threadId === claimedThreadId;
+  }
+  return Boolean(state.promptActivity || promptSubmissionBootstrapInFlight);
+}
+
+function hasCurrentPromptInFlight(): boolean {
+  return Boolean(
+    promptSubmissionBootstrapInFlight ||
+      state.promptActivity ||
+      state.activeTurn ||
+      state.streamingAssistantMessageIds.size > 0,
+  );
+}
+
+function getCurrentClaimedBridgeEventThreadId(): string {
+  if (state.activeTurn?.threadId) {
+    return state.activeTurn.threadId;
+  }
+  if (state.streamingAssistantMessageIds.size > 0 && state.threadId) {
+    return state.threadId;
+  }
+  return "";
+}
+
+function rememberCurrentConversationThreadForBridgeEvent(event: SidepanelBridgeEvent): void {
+  const threadId = getBridgeEventThreadId(event);
+  if (!threadId || !state.currentConversationId) {
+    return;
+  }
+  rememberConversationThreadId(state.currentConversationId, threadId);
+  if (!state.threadId) {
+    state.threadId = threadId;
+  }
+}
+
+function isConversationScopedBridgeEventType(eventType: string): boolean {
+  switch (eventType) {
+    case "message.delta":
+    case "message.completed":
+    case "message.image":
+    case "prompt.retrying":
+    case "prompt.status":
+    case "context.compaction.started":
+    case "context.compaction.completed":
+    case "turn.started":
+    case "turn.completed":
+    case "turn.activity":
+    case "turn.plan.updated":
+    case "turn.diff.updated":
+    case "model.rerouted":
+      return true;
+    default:
+      return false;
+  }
 }
 
 function getDetachedConversationMessages(conversationId: string): ConversationMessage[] {
@@ -1618,6 +2017,30 @@ async function hydrateImageForDetachedConversation(input: {
   await persistDetachedConversation(input.conversationId);
 }
 
+async function hydrateGeneratedImagesForDetachedConversation(
+  conversationId: string,
+  messageId: string,
+  previewRefs: string[],
+  baseAlt: string,
+): Promise<void> {
+  const refs = normalizeImagePreviewRefs(previewRefs, undefined);
+  if (!refs.length) {
+    clearConversationActivity(conversationId);
+    await persistDetachedConversation(conversationId);
+    return;
+  }
+  await Promise.allSettled(
+    refs.map((previewRef, index) =>
+      hydrateImageForDetachedConversation({
+        conversationId,
+        itemId: messageId,
+        previewRef,
+        alt: createGeneratedImageAlt(baseAlt, index, refs.length),
+      }),
+    ),
+  );
+}
+
 function clearConversationActivity(conversationId: string): void {
   promptActivitiesByConversationId.delete(conversationId);
   activePromptUserMessageIdsByConversationId.delete(conversationId);
@@ -1692,14 +2115,35 @@ function getSelectedModelReasoningEfforts(): string[] {
 }
 
 function render(): void {
+  if (composerCompositionInProgress) {
+    renderDeferredDuringComposerComposition = true;
+    return;
+  }
   renderBatcher.request();
 }
 
 function renderSync(): void {
+  if (composerCompositionInProgress) {
+    renderDeferredDuringComposerComposition = true;
+    return;
+  }
   renderBatcher.flush();
 }
 
+function flushDeferredComposerCompositionRender(): void {
+  if (!renderDeferredDuringComposerComposition || composerCompositionInProgress) {
+    return;
+  }
+  renderDeferredDuringComposerComposition = false;
+  render();
+}
+
 function renderNow(): void {
+  if (composerCompositionInProgress) {
+    renderDeferredDuringComposerComposition = true;
+    return;
+  }
+
   ensureComposerProfileSelection();
   const strings = getUiStrings(state.uiLocale);
   const mentionOptions =
@@ -1719,59 +2163,6 @@ function renderNow(): void {
     state.slashQuery !== null || state.mentionQuery !== null || state.attachmentMenuOpen || state.composerModelMenuOpen;
   const isPopup = panelMode === "popup";
   const currentTurnActive = isCurrentTurnActive();
-  const canStopCurrentWork = currentTurnActive || Boolean(state.promptActivity);
-  const canSendMessage = canSendComposerMessage({
-    draft: state.composerDraft,
-    turnActive: currentTurnActive,
-    promptActivityActive: Boolean(state.promptActivity),
-    streamingAssistantActive: state.streamingAssistantMessageIds.size > 0,
-    submissionStartingActive: promptSubmissionBootstrapInFlight,
-  });
-  const composerPrimaryAction = resolveComposerPrimaryAction({
-    composerDraft: state.composerDraft,
-    currentWorkActive: canStopCurrentWork,
-    liveActive: state.voiceEnabled,
-  });
-  const composerPrimaryActionId =
-    composerPrimaryAction === "stop-turn"
-      ? "stop-turn"
-      : composerPrimaryAction === "send"
-        ? "send-prompt"
-        : composerPrimaryAction === "stop-live"
-          ? "stop-live"
-        : "live-toggle";
-  const composerPrimaryActionLabel =
-    composerPrimaryAction === "stop-turn"
-      ? strings.actions.stop
-      : composerPrimaryAction === "send"
-        ? strings.actions.send
-        : composerPrimaryAction === "stop-live"
-          ? strings.actions.stopLive
-          : strings.actions.live;
-  const composerPrimaryActionDisabled =
-    composerPrimaryAction === "send"
-      ? !canSendMessage
-      : composerPrimaryAction === "stop-turn"
-        ? false
-        : state.pendingAction === "voice" || state.voiceInputActive;
-  const composerPrimaryActionClass = [
-    "send-button",
-    composerPrimaryAction === "stop-turn" ? "stop" : "",
-    composerPrimaryAction === "start-live" || composerPrimaryAction === "stop-live" ? "live" : "",
-    composerPrimaryAction === "stop-live" ? "live-active" : "",
-  ]
-    .filter(Boolean)
-    .join(" ");
-  const composerPrimaryActionIcon =
-    composerPrimaryAction === "stop-turn"
-      ? renderUiIcon("stop-filled")
-      : composerPrimaryAction === "send"
-        ? renderUiIcon("send")
-        : renderUiIcon("audio-lines");
-  const composerPrimaryActionContent =
-    composerPrimaryAction === "stop-live"
-      ? `<span class="live-button-icon">${composerPrimaryActionIcon}</span><span class="live-button-label">${escapeHtml(strings.actions.stopLive)}</span>`
-      : composerPrimaryActionIcon;
   const quickInteractionLocked = isQuickInteractionLocked({
     turnActive: currentTurnActive,
     promptActivityActive: Boolean(state.promptActivity),
@@ -1904,15 +2295,7 @@ function renderNow(): void {
                     >
                       ${renderUiIcon("mic")}
                     </button>
-                    <button
-                      id="${composerPrimaryActionId}"
-                      class="${composerPrimaryActionClass}"
-                      aria-label="${escapeAttribute(composerPrimaryActionLabel)}"
-                      title="${escapeAttribute(composerPrimaryActionLabel)}"
-                      ${composerPrimaryActionDisabled ? "disabled" : ""}
-                    >
-                      ${composerPrimaryActionContent}
-                    </button>
+                    ${renderComposerPrimaryActionButton(strings)}
                   </div>
                 </div>`
           }
@@ -1930,6 +2313,174 @@ function renderNow(): void {
   restoreScrollPositions(scrollState);
   updateScrollToBottomButtonVisibility();
   restoreComposerRenderState(composerState);
+}
+
+function resolveComposerPrimaryActionButton(strings: ReturnType<typeof getUiStrings>): {
+  id: "send-prompt" | "stop-turn" | "stop-live" | "live-toggle";
+  className: string;
+  label: string;
+  disabled: boolean;
+  content: string;
+} {
+  const currentTurnActive = isCurrentTurnActive();
+  const canStopCurrentWork = currentTurnActive || Boolean(state.promptActivity);
+  const canSendMessage = canSendComposerMessage({
+    draft: state.composerDraft,
+    turnActive: currentTurnActive,
+    promptActivityActive: Boolean(state.promptActivity),
+    streamingAssistantActive: state.streamingAssistantMessageIds.size > 0,
+    submissionStartingActive: promptSubmissionBootstrapInFlight,
+  });
+  const action = resolveComposerPrimaryAction({
+    composerDraft: state.composerDraft,
+    currentWorkActive: canStopCurrentWork,
+    liveActive: state.voiceEnabled,
+  });
+  const id =
+    action === "stop-turn"
+      ? "stop-turn"
+      : action === "send"
+        ? "send-prompt"
+        : action === "stop-live"
+          ? "stop-live"
+          : "live-toggle";
+  const label =
+    action === "stop-turn"
+      ? strings.actions.stop
+      : action === "send"
+        ? strings.actions.send
+        : action === "stop-live"
+          ? strings.actions.stopLive
+          : strings.actions.live;
+  const disabled =
+    action === "send"
+      ? !canSendMessage
+      : action === "stop-turn"
+        ? false
+        : state.pendingAction === "voice" || state.voiceInputActive;
+  const className = [
+    "send-button",
+    action === "stop-turn" ? "stop" : "",
+    action === "start-live" || action === "stop-live" ? "live" : "",
+    action === "stop-live" ? "live-active" : "",
+  ]
+    .filter(Boolean)
+    .join(" ");
+  const icon =
+    action === "stop-turn" ? renderUiIcon("stop-filled") : action === "send" ? renderUiIcon("send") : renderUiIcon("audio-lines");
+  const content =
+    action === "stop-live"
+      ? `<span class="live-button-icon">${icon}</span><span class="live-button-label">${escapeHtml(strings.actions.stopLive)}</span>`
+      : icon;
+
+  return {
+    id,
+    className,
+    label,
+    disabled,
+    content,
+  };
+}
+
+function renderComposerPrimaryActionButton(strings: ReturnType<typeof getUiStrings> = stringsForState()): string {
+  const button = resolveComposerPrimaryActionButton(strings);
+  return `
+    <button
+      id="${button.id}"
+      class="${button.className}"
+      aria-label="${escapeAttribute(button.label)}"
+      title="${escapeAttribute(button.label)}"
+      ${button.disabled ? "disabled" : ""}
+    >
+      ${button.content}
+    </button>
+  `;
+}
+
+function syncComposerPrimaryActionButton(): void {
+  const existing = root.querySelector<HTMLButtonElement>("#send-prompt, #stop-turn, #live-toggle, #stop-live");
+  if (!existing) {
+    return;
+  }
+
+  const template = document.createElement("template");
+  template.innerHTML = renderComposerPrimaryActionButton().trim();
+  const next = template.content.firstElementChild;
+  if (!(next instanceof HTMLButtonElement)) {
+    return;
+  }
+
+  existing.replaceWith(next);
+  bindComposerPrimaryActionButton(next);
+}
+
+function bindComposerPrimaryActionButton(button: HTMLButtonElement): void {
+  if (button.id === "send-prompt") {
+    button.addEventListener("click", () => {
+      void sendPrompt();
+    });
+    return;
+  }
+
+  if (button.id === "stop-turn") {
+    button.addEventListener("click", () => {
+      void cancelActivePromptFromComposer();
+    });
+    return;
+  }
+
+  if (button.id === "live-toggle" || button.id === "stop-live") {
+    button.addEventListener("click", () => {
+      void toggleRealtimeVoiceFromComposer();
+    });
+  }
+}
+
+async function cancelActivePromptFromComposer(): Promise<void> {
+  const activePromptRequestId = state.promptActivity?.clientRequestId;
+  const activeTurn = state.activeTurn;
+  if (!activeTurn && !activePromptRequestId) {
+    return;
+  }
+  if (activePromptRequestId) {
+    cancelledPromptRequestIds.add(activePromptRequestId);
+  }
+  await chrome.runtime.sendMessage({
+    type: "prompt.cancel",
+    clientRequestId: activePromptRequestId,
+    threadId: activeTurn?.threadId,
+    turnId: activeTurn?.turnId,
+  });
+  state.activeTurn = null;
+  state.promptActivity = null;
+  state.streamingAssistantMessageIds.clear();
+  render();
+}
+
+async function toggleRealtimeVoiceFromComposer(): Promise<void> {
+  if (voiceStartPromise) {
+    return;
+  }
+  state.initError = "";
+  state.actionStatus = "";
+  state.pendingAction = "voice";
+  render();
+  try {
+    if (!state.voiceEnabled) {
+      voiceStartPromise = startRealtimeVoiceSession();
+      await voiceStartPromise;
+    } else {
+      await stopRealtimeVoiceSession({ notifyBridge: true });
+    }
+  } catch (error) {
+    state.initError = error instanceof Error ? error.message : stringsForState().errors.voiceUpdate;
+    cleanupRealtimeVoiceResources();
+    state.voiceEnabled = false;
+  } finally {
+    voiceStartPromise = null;
+    state.pendingAction = "";
+    render();
+  }
 }
 
 function renderFloatingNotifications(): string {
@@ -3134,7 +3685,7 @@ function renderPinnedActionSuggestions(strings: ReturnType<typeof getUiStrings>,
             <button class="site-suggestion action-card" data-action="${escapeAttribute(card.id)}" ${disabledAttribute}>
               ${renderSuggestionCardIcon(card)}
               <span class="site-suggestion-copy">
-                <strong>${escapeHtml(renderActionCardTitle(strings, card))}</strong>
+                <strong title="${escapeAttribute(card.prompt ?? renderActionCardTitle(strings, card))}">${escapeHtml(renderActionCardTitle(strings, card))}</strong>
               </span>
             </button>
           `,
@@ -3155,15 +3706,30 @@ function getPinnedSuggestionCards(): ActionCard[] {
     state.currentTabReference,
     state.settings.customSiteSuggestions,
   );
-  return mergeProfileAndSiteSuggestionCards(profileCards, [...customCards, ...state.actionCards], 4);
+  const imageCards = createImageAttachmentSuggestionCards({
+    attachments: state.fileAttachments,
+    locale: state.uiLocale,
+  });
+  return mergeProfileAndSiteSuggestionCards([...imageCards, ...profileCards], [...customCards, ...state.actionCards], 4);
 }
 
 function renderSuggestionCardIcon(card: ActionCard): string {
+  if (isImageAttachmentSuggestionCard(card)) {
+    return `
+      <span class="site-suggestion-site-icon attachment-image" aria-hidden="true">
+        ${renderUiIcon("image")}
+      </span>
+    `;
+  }
   if (getSuggestionCardSource(card) === "profile") {
     const selectedProfile = state.profiles.find((profile) => profile.id === state.selectedProfileId) ?? null;
     return renderProfileSuggestionIcon(selectedProfile);
   }
   return renderSiteSuggestionIcon(state.currentTabReference);
+}
+
+function isImageAttachmentSuggestionCard(card: Pick<ActionCard, "id">): boolean {
+  return card.id === IMAGE_ATTACHMENT_PROMPT_EXTRACT_ACTION_ID || card.id === IMAGE_ATTACHMENT_DESCRIBE_ACTION_ID;
 }
 
 function renderProfileSuggestionIcon(profile: ProfileTemplate | null): string {
@@ -3796,7 +4362,7 @@ function renderMessageEditComposer(
   message: ConversationMessage,
   strings: ReturnType<typeof getUiStrings>,
 ): string {
-  const disabled = canSendCurrentComposerMessage() ? "" : "disabled";
+  const disabled = canStartMessageReplayInteraction() ? "" : "disabled";
   return `
     <div class="message-edit-box">
       <textarea data-message-edit-input="${escapeAttribute(message.id)}">${escapeHtml(message.text)}</textarea>
@@ -3863,7 +4429,7 @@ function renderMessageActions(
     return "";
   }
 
-  const disabled = canSendCurrentComposerMessage() ? "" : "disabled";
+  const disabled = canStartMessageReplayInteraction() ? "" : "disabled";
   if (message.role === "assistant") {
     if (
       !shouldRenderAssistantMessageActions({
@@ -5435,19 +6001,31 @@ function renderAttachedContextSummary(strings: ReturnType<typeof getUiStrings>):
 }
 
 function renderFileAttachmentChip(attachment: UserFileAttachment, strings: ReturnType<typeof getUiStrings>): string {
-  if (attachment.kind === "image" && isAnnotatableImageAttachment(attachment)) {
-    const label = strings.prompts.markEditArea(attachment.name);
+  const chipLabel = createFileChipLabel(attachment);
+  const previewSrc = createImageAttachmentPreviewSrc(attachment);
+  if (attachment.kind === "image" && previewSrc) {
+    const canAnnotate = isAnnotatableImageAttachment(attachment);
+    const previewLabel = canAnnotate ? strings.prompts.markEditArea(attachment.name) : chipLabel;
+    const previewContent = `
+      <img src="${escapeAttribute(previewSrc)}" alt="" loading="lazy" referrerpolicy="no-referrer" />
+      <span class="file-chip-label">${escapeHtml(chipLabel)}</span>
+    `;
     return `
       <span class="summary-chip file-chip image-file-chip">
-        <button
-          class="file-chip-preview"
-          data-edit-file-image-id="${escapeAttribute(attachment.id)}"
-          title="${escapeAttribute(label)}"
-          aria-label="${escapeAttribute(label)}"
-        >
-          <img src="${escapeAttribute(getImageAttachmentDataUrl(attachment))}" alt="" loading="lazy" />
-          <span>${escapeHtml(createFileChipLabel(attachment))}</span>
-        </button>
+        ${
+          canAnnotate
+            ? `<button
+                class="file-chip-preview"
+                data-edit-file-image-id="${escapeAttribute(attachment.id)}"
+                title="${escapeAttribute(previewLabel)}"
+                aria-label="${escapeAttribute(previewLabel)}"
+              >${previewContent}</button>`
+            : `<span
+                class="file-chip-preview static"
+                title="${escapeAttribute(previewLabel)}"
+                aria-label="${escapeAttribute(previewLabel)}"
+              >${previewContent}</span>`
+        }
         <button
           class="file-chip-remove"
           data-remove-file-id="${escapeAttribute(attachment.id)}"
@@ -5460,7 +6038,7 @@ function renderFileAttachmentChip(attachment: UserFileAttachment, strings: Retur
 
   return `
     <button class="summary-chip file-chip" data-remove-file-id="${escapeAttribute(attachment.id)}" title="${escapeAttribute(strings.actions.removeAttachment)}" aria-label="${escapeAttribute(strings.actions.removeAttachment)}">
-      <span>${escapeHtml(createFileChipLabel(attachment))}</span>
+      <span class="file-chip-label">${escapeHtml(chipLabel)}</span>
       <span class="summary-chip-dismiss">${renderUiIcon("x")}</span>
     </button>
   `;
@@ -5732,17 +6310,6 @@ function buildConversationContextHint(): string {
     .slice(-3000);
 }
 
-function hasComposerDropPayload(dataTransfer: DataTransfer | null): boolean {
-  if (!dataTransfer) {
-    return false;
-  }
-  if (dataTransfer.files.length > 0) {
-    return true;
-  }
-  const types = Array.from(dataTransfer.types ?? []);
-  return types.some((type) => type === "text/html" || type === "text/uri-list" || type === "text/plain");
-}
-
 async function ingestSelectedFiles(fileList: FileList | File[]): Promise<void> {
   const files = Array.from(fileList);
   if (files.length === 0) {
@@ -5905,8 +6472,9 @@ function installComposerDropHandlers(): void {
     }
 
     const webImageUrls = extractWebImageUrlsFromDropData(dataTransfer);
-    if (dataTransfer.files.length > 0) {
-      await ingestSelectedFiles(dataTransfer.files);
+    const droppedFiles = getDroppedFiles(dataTransfer);
+    if (droppedFiles.length > 0) {
+      await ingestSelectedFiles(droppedFiles);
       ingestRemoteImageUrls(webImageUrls);
       return;
     }
@@ -7321,6 +7889,24 @@ function canSendCurrentComposerMessage(draft = state.composerDraft): boolean {
   });
 }
 
+function canStartMessageReplayInteraction(): boolean {
+  return (
+    !promptSubmissionBootstrapInFlight &&
+    !isCurrentTurnActive() &&
+    !state.promptActivity &&
+    state.streamingAssistantMessageIds.size === 0
+  );
+}
+
+function canStartCurrentComposerWorkflow(): boolean {
+  return (
+    !promptSubmissionBootstrapInFlight &&
+    !isCurrentTurnActive() &&
+    !state.promptActivity &&
+    state.streamingAssistantMessageIds.size === 0
+  );
+}
+
 function isQuickInteractionLockedForState(): boolean {
   return isQuickInteractionLocked({
     turnActive: isCurrentTurnActive(),
@@ -7991,6 +8577,7 @@ function bindEvents(): void {
       });
       state.pendingPermission = null;
       state.initError = "";
+      void installActiveTabImagePromptExtractor();
       if (retryMessage && canSendCurrentComposerMessage()) {
         state.actionStatus =
           stringsForState().status.siteAccessRetry;
@@ -8394,6 +8981,9 @@ function bindEvents(): void {
 
   root.querySelector<HTMLTextAreaElement>("#composer")?.addEventListener("input", (event) => {
     const target = event.currentTarget as HTMLTextAreaElement;
+    const compositionActive =
+      composerCompositionInProgress ||
+      ("isComposing" in event && Boolean((event as InputEvent).isComposing));
     const previousComposerDraft = state.composerDraft;
     const previousMentionQuery = state.mentionQuery;
     const previousSlashQuery = state.slashQuery;
@@ -8404,6 +8994,7 @@ function bindEvents(): void {
       nextComposerDraft: target.value,
       currentWorkActive: isCurrentTurnActive() || Boolean(state.promptActivity),
       liveActive: state.voiceEnabled,
+      compositionInProgress: compositionActive,
     });
     state.composerDraft = target.value;
     state.attachmentMenuOpen = false;
@@ -8411,6 +9002,9 @@ function bindEvents(): void {
     state.composerModelMenuOpen = false;
     state.appMenuOpen = false;
     rememberComposerInteraction(target);
+    if (compositionActive) {
+      return;
+    }
     state.mentionQuery = extractMentionQuery(target.value);
     state.slashQuery = extractSlashQuery(target.value);
     if (previousSlashQuery !== state.slashQuery) {
@@ -8419,16 +9013,14 @@ function bindEvents(): void {
     if (state.mentionQuery !== null && previousMentionQuery === null) {
       void refreshOpenTabSuggestions({ requestPermission: false });
     }
+    if (primaryActionChanged) {
+      syncComposerPrimaryActionButton();
+    }
     const shouldRerenderComposer =
-      primaryActionChanged ||
       wasAppMenuOpen ||
       wasBrowserActionPermissionMenuOpen ||
       previousMentionQuery !== state.mentionQuery ||
       previousSlashQuery !== state.slashQuery;
-    if (primaryActionChanged) {
-      renderSync();
-      return;
-    }
     if (!shouldRerenderComposer) {
       return;
     }
@@ -8453,10 +9045,40 @@ function bindEvents(): void {
 
   root.querySelector<HTMLTextAreaElement>("#composer")?.addEventListener("compositionstart", () => {
     composerCompositionInProgress = true;
+    composerCompositionStartDraft = state.composerDraft;
   });
 
-  root.querySelector<HTMLTextAreaElement>("#composer")?.addEventListener("compositionend", () => {
+  root.querySelector<HTMLTextAreaElement>("#composer")?.addEventListener("compositionend", (event) => {
+    const target = event.currentTarget as HTMLTextAreaElement;
+    const previousComposerDraft = composerCompositionStartDraft;
+    const previousMentionQuery = state.mentionQuery;
+    const previousSlashQuery = state.slashQuery;
+
     composerCompositionInProgress = false;
+    composerCompositionStartDraft = "";
+    state.composerDraft = target.value;
+    rememberComposerInteraction(target);
+    state.mentionQuery = extractMentionQuery(target.value);
+    state.slashQuery = extractSlashQuery(target.value);
+    if (previousSlashQuery !== state.slashQuery) {
+      state.slashActiveIndex = 0;
+    }
+    if (state.mentionQuery !== null && previousMentionQuery === null) {
+      void refreshOpenTabSuggestions({ requestPermission: false });
+    }
+    const primaryActionChanged = didComposerPrimaryActionChangeForDraftInput({
+      previousComposerDraft,
+      nextComposerDraft: target.value,
+      currentWorkActive: isCurrentTurnActive() || Boolean(state.promptActivity),
+      liveActive: state.voiceEnabled,
+    });
+    if (primaryActionChanged) {
+      syncComposerPrimaryActionButton();
+    }
+    if (previousMentionQuery !== state.mentionQuery || previousSlashQuery !== state.slashQuery) {
+      render();
+    }
+    flushDeferredComposerCompositionRender();
   });
 
   root.querySelector<HTMLTextAreaElement>("#composer")?.addEventListener("keydown", (event) => {
@@ -8674,30 +9296,12 @@ function bindEvents(): void {
     });
   });
 
-  root.querySelector<HTMLButtonElement>("#send-prompt")?.addEventListener("click", () => {
-    void sendPrompt();
-  });
-
-  root.querySelector<HTMLButtonElement>("#stop-turn")?.addEventListener("click", async () => {
-    const activePromptRequestId = state.promptActivity?.clientRequestId;
-    const activeTurn = state.activeTurn;
-    if (!activeTurn && !activePromptRequestId) {
-      return;
-    }
-    if (activePromptRequestId) {
-      cancelledPromptRequestIds.add(activePromptRequestId);
-    }
-    await chrome.runtime.sendMessage({
-      type: "prompt.cancel",
-      clientRequestId: activePromptRequestId,
-      threadId: activeTurn?.threadId,
-      turnId: activeTurn?.turnId,
-    });
-    state.activeTurn = null;
-    state.promptActivity = null;
-    state.streamingAssistantMessageIds.clear();
-    render();
-  });
+  const composerPrimaryActionButton = root.querySelector<HTMLButtonElement>(
+    "#send-prompt, #stop-turn, #live-toggle, #stop-live",
+  );
+  if (composerPrimaryActionButton) {
+    bindComposerPrimaryActionButton(composerPrimaryActionButton);
+  }
 
   root.querySelector<HTMLButtonElement>("#voice-input-toggle")?.addEventListener("click", async () => {
     if (state.voiceInputActive) {
@@ -8713,32 +9317,6 @@ function bindEvents(): void {
 
   root.querySelector<HTMLButtonElement>("#voice-dictation-confirm")?.addEventListener("click", () => {
     void commitComposerVoiceInput();
-  });
-
-  root.querySelector<HTMLButtonElement>("#live-toggle, #stop-live")?.addEventListener("click", async () => {
-    if (voiceStartPromise) {
-      return;
-    }
-    state.initError = "";
-    state.actionStatus = "";
-    state.pendingAction = "voice";
-    render();
-    try {
-      if (!state.voiceEnabled) {
-        voiceStartPromise = startRealtimeVoiceSession();
-        await voiceStartPromise;
-      } else {
-        await stopRealtimeVoiceSession({ notifyBridge: true });
-      }
-    } catch (error) {
-      state.initError = error instanceof Error ? error.message : strings.errors.voiceUpdate;
-      cleanupRealtimeVoiceResources();
-      state.voiceEnabled = false;
-    } finally {
-      voiceStartPromise = null;
-      state.pendingAction = "";
-      render();
-    }
   });
 
   root.querySelectorAll<HTMLButtonElement>(".action-card").forEach((button) => {
@@ -9159,9 +9737,10 @@ async function sendPrompt(
     }
   }
 
-  let conversationIdAtSend = state.currentConversationId;
+  let conversationIdAtStart = state.currentConversationId;
   let userMessageId = "";
   let clientRequestId = "";
+  let submittedComposerFileAttachments: UserFileAttachment[] = [];
   promptSubmissionBootstrapInFlight = true;
 
   try {
@@ -9176,7 +9755,7 @@ async function sendPrompt(
       });
       hydrateConversation(created.conversation);
     }
-    conversationIdAtSend = state.currentConversationId;
+    conversationIdAtStart = state.currentConversationId;
     if (options.resetThread) {
       state.threadId = "";
       state.activeTurn = null;
@@ -9190,13 +9769,13 @@ async function sendPrompt(
     sanitizeUnavailableCurrentPageState();
     const nextAttachments = Array.from(state.attachments);
     const contextHint = buildConversationContextHint();
-    const generatedImageAttachments = await createGeneratedImageFileAttachmentsForPrompt(
-      message,
-      contextHint,
-      activeProfileId,
-      state.fileAttachments.length,
+    const submittedFileAttachmentState = createSubmittedComposerFileAttachmentState(
+      state.fileAttachments,
     );
-    const nextFileAttachments = [...state.fileAttachments, ...generatedImageAttachments];
+    submittedComposerFileAttachments = submittedFileAttachmentState.messageFileAttachments;
+    const submittedMessageFileAttachments = submittedFileAttachmentState.messageFileAttachments;
+    const submittedRequestFileAttachments = submittedFileAttachmentState.requestFileAttachments;
+    state.fileAttachments = submittedFileAttachmentState.composerFileAttachments;
     const messageProfile = createMessageProfileSnapshot();
     userMessageId = `user-${Date.now()}`;
     clientRequestId = `prompt-${Date.now()}-${Math.random().toString(36).slice(2)}`;
@@ -9206,13 +9785,22 @@ async function sendPrompt(
       phase: "preparing",
     };
     promptSubmissionBootstrapInFlight = false;
-    promptRequestConversationIds.set(clientRequestId, conversationIdAtSend);
-    promptActivitiesByConversationId.set(conversationIdAtSend, state.promptActivity);
+    promptRequestConversationIds.set(clientRequestId, conversationIdAtStart);
+    promptActivitiesByConversationId.set(conversationIdAtStart, state.promptActivity);
+    render();
+
+    const generatedImageAttachments = await createGeneratedImageFileAttachmentsForPrompt(
+      message,
+      contextHint,
+      activeProfileId,
+      submittedRequestFileAttachments,
+    );
+    const nextFileAttachments = [...submittedRequestFileAttachments, ...generatedImageAttachments];
     state.messages.push({
       id: userMessageId,
       role: "user",
       text: displayMessage || message,
-      ...(nextFileAttachments.length ? { attachments: createConversationMessageAttachments(nextFileAttachments) } : {}),
+      ...(submittedMessageFileAttachments.length ? { attachments: createConversationMessageAttachments(submittedMessageFileAttachments) } : {}),
       ...(messageProfile ? { profile: messageProfile } : {}),
     });
     rememberCurrentConversationSnapshot();
@@ -9233,7 +9821,7 @@ async function sendPrompt(
       type: sendAsTurnSteer ? "turn.steer" : "prompt.send",
       payload: {
         message,
-        conversationId: conversationIdAtSend,
+        conversationId: conversationIdAtStart,
         contextHint,
         clientRequestId,
         profileId: activeProfileId,
@@ -9269,20 +9857,34 @@ async function sendPrompt(
       clearActivePromptUserMessageId();
       state.streamingAssistantMessageIds.clear();
       Object.assign(state, createRestoredComposerDraftState(message));
+      state.fileAttachments = submittedComposerFileAttachments;
       if (composer) {
         composer.value = message;
       }
       render();
       return;
     }
-    const resultConversationId = result.currentConversationId ?? conversationIdAtSend;
+    const resultConversationId = result.currentConversationId ?? conversationIdAtStart;
     if (result.threadId) {
-      conversationThreadIdsById.set(resultConversationId, result.threadId);
+      rememberConversationThreadId(resultConversationId, result.threadId);
     }
     if (resultConversationId !== state.currentConversationId) {
-      clearConversationActivity(resultConversationId);
+      if (result.workflow === "generated-image") {
+        const previewRefs = normalizeImagePreviewRefs(result.previewRefs, result.previewRef);
+        const imageAlt = stringsForState().images.generated;
+        const workflowMessageId =
+          pendingImageWorkflowMessageIdsByRequest.get(clientRequestId) ??
+          completedImageWorkflowMessageIdsByRequest.get(clientRequestId) ??
+          `assistant-image-${Date.now()}`;
+        await hydrateGeneratedImagesForDetachedConversation(resultConversationId, workflowMessageId, previewRefs, imageAlt);
+        pendingImageWorkflowMessageIdsByRequest.delete(clientRequestId);
+        streamedImagePreviewRefsByRequest.delete(clientRequestId);
+        completedImageWorkflowMessageIdsByRequest.delete(clientRequestId);
+      } else {
+        clearConversationActivity(resultConversationId);
+        await persistDetachedConversation(resultConversationId);
+      }
       promptRequestConversationIds.delete(clientRequestId);
-      await persistDetachedConversation(resultConversationId);
       return;
     }
     if (result.workflow === "image-edit") {
@@ -9408,12 +10010,12 @@ async function sendPrompt(
       return;
     }
     removePendingImageWorkflowMessage(clientRequestId);
-    if (conversationIdAtSend !== state.currentConversationId) {
-      clearConversationActivity(conversationIdAtSend);
+    if (conversationIdAtStart !== state.currentConversationId) {
+      clearConversationActivity(conversationIdAtStart);
       promptRequestConversationIds.delete(clientRequestId);
       const errorMessage = toUserFacingRuntimeError(error);
-      getDetachedConversationMessages(conversationIdAtSend).push(createAssistantFailureMessage(errorMessage, state.uiLocale));
-      await persistDetachedConversation(conversationIdAtSend);
+      getDetachedConversationMessages(conversationIdAtStart).push(createAssistantFailureMessage(errorMessage, state.uiLocale));
+      await persistDetachedConversation(conversationIdAtStart);
       return;
     }
     const oauthFallbackResult = await handleOAuthUsageFallbackRequest(
@@ -9427,6 +10029,7 @@ async function sendPrompt(
       state.streamingAssistantMessageIds.clear();
       state.activeTurn = null;
       Object.assign(state, createRestoredComposerDraftState(message));
+      state.fileAttachments = submittedComposerFileAttachments;
       if (composer) {
         composer.value = message;
       }
@@ -9602,10 +10205,21 @@ function createSendPromptDisplayOptions(displayMessage: string | undefined): { d
 }
 
 async function createInfographicFromCurrentPage(): Promise<void> {
-  if (!canSendCurrentComposerMessage()) {
+  if (!canStartCurrentComposerWorkflow()) {
     return;
   }
 
+  const activeProfileId = ensureComposerProfileSelection();
+  if (!state.currentConversationId) {
+    const created = await sendRuntimeMessage<{ conversation: SavedConversation }>({
+      type: "conversation.new",
+      profileId: activeProfileId,
+      model: state.selectedModel,
+    });
+    hydrateConversation(created.conversation);
+  }
+
+  const conversationIdAtStart = state.currentConversationId;
   const userMessageText = stringsForState().prompts.createInfographicFromPage;
   const userMessageId = `user-infographic-${Date.now()}`;
   const clientRequestId = `infographic-${Date.now()}-${Math.random().toString(36).slice(2)}`;
@@ -9621,7 +10235,10 @@ async function createInfographicFromCurrentPage(): Promise<void> {
     text: userMessageText,
     ...(messageProfile ? { profile: messageProfile } : {}),
   });
-  pushPendingImageWorkflowMessage(clientRequestId, "infographic");
+  const workflowMessageId = pushPendingImageWorkflowMessage(clientRequestId, "infographic");
+  promptRequestConversationIds.set(clientRequestId, conversationIdAtStart);
+  promptActivitiesByConversationId.set(conversationIdAtStart, state.promptActivity);
+  rememberCurrentConversationSnapshot();
   scheduleConversationPersist();
   render();
 
@@ -9631,10 +10248,12 @@ async function createInfographicFromCurrentPage(): Promise<void> {
       previewRef?: string;
       previewRefs?: string[];
       actionCards?: ActionCard[];
+      currentConversationId?: string;
       cancelled?: boolean;
     }>({
       type: "image.infographic.start",
       clientRequestId,
+      conversationId: conversationIdAtStart,
       conversationContext: buildInfographicConversationContext(state.messages),
     });
     if (isCancelledResult(result)) {
@@ -9645,7 +10264,14 @@ async function createInfographicFromCurrentPage(): Promise<void> {
       return;
     }
     const previewRefs = normalizeImagePreviewRefs(result.previewRefs, result.previewRef);
+    const resultConversationId = result.currentConversationId ?? conversationIdAtStart;
     if (!previewRefs.length) {
+      if (resultConversationId !== state.currentConversationId) {
+        clearConversationActivity(resultConversationId);
+        promptRequestConversationIds.delete(clientRequestId);
+        await persistDetachedConversation(resultConversationId);
+        return;
+      }
       removePendingImageWorkflowMessage(clientRequestId);
       state.messages = state.messages.filter((entry) => entry.id !== userMessageId);
       state.promptActivity = null;
@@ -9653,10 +10279,16 @@ async function createInfographicFromCurrentPage(): Promise<void> {
       return;
     }
 
+    const imageAlt = stringsForState().images.infographic;
+    if (resultConversationId !== state.currentConversationId) {
+      await hydrateGeneratedImagesForDetachedConversation(resultConversationId, workflowMessageId, previewRefs, imageAlt);
+      promptRequestConversationIds.delete(clientRequestId);
+      return;
+    }
+
     state.actionCards = result.actionCards ?? state.actionCards;
     state.promptActivity = null;
     state.streamingAssistantMessageIds.clear();
-    const imageAlt = stringsForState().images.infographic;
     const streamedPreviewRefs = consumeStreamedImagePreviewRefs(clientRequestId);
     if (streamedPreviewRefs.length) {
       const missingPreviewRefs = previewRefs.filter((previewRef) => !streamedPreviewRefs.includes(previewRef));
@@ -9689,10 +10321,17 @@ async function createInfographicFromCurrentPage(): Promise<void> {
     render();
     void hydrateConversationImages(messageId, previewRefs, imageAlt);
   } catch (error) {
+    const errorMessage = toUserFacingRuntimeError(error);
+    if (conversationIdAtStart !== state.currentConversationId) {
+      clearConversationActivity(conversationIdAtStart);
+      promptRequestConversationIds.delete(clientRequestId);
+      getDetachedConversationMessages(conversationIdAtStart).push(createAssistantFailureMessage(errorMessage, state.uiLocale));
+      await persistDetachedConversation(conversationIdAtStart);
+      return;
+    }
     removePendingImageWorkflowMessage(clientRequestId);
     state.promptActivity = null;
     state.streamingAssistantMessageIds.clear();
-    const errorMessage = toUserFacingRuntimeError(error);
     state.messages.push(createAssistantFailureMessage(errorMessage, state.uiLocale));
     state.initError = errorMessage;
     scheduleConversationPersist();
@@ -9701,10 +10340,21 @@ async function createInfographicFromCurrentPage(): Promise<void> {
 }
 
 async function createSlideImagesFromCurrentPage(prompt: string): Promise<void> {
-  if (!canSendCurrentComposerMessage()) {
+  if (!canStartCurrentComposerWorkflow()) {
     return;
   }
 
+  const activeProfileId = ensureComposerProfileSelection();
+  if (!state.currentConversationId) {
+    const created = await sendRuntimeMessage<{ conversation: SavedConversation }>({
+      type: "conversation.new",
+      profileId: activeProfileId,
+      model: state.selectedModel,
+    });
+    hydrateConversation(created.conversation);
+  }
+
+  const conversationIdAtStart = state.currentConversationId;
   const userMessageText =
     prompt.trim() || stringsForState().prompts.createSlideImagesFromPage;
   const userMessageId = `user-slide-images-${Date.now()}`;
@@ -9721,7 +10371,10 @@ async function createSlideImagesFromCurrentPage(prompt: string): Promise<void> {
     text: userMessageText,
     ...(messageProfile ? { profile: messageProfile } : {}),
   });
-  pushPendingImageWorkflowMessage(clientRequestId, "slide-images");
+  const workflowMessageId = pushPendingImageWorkflowMessage(clientRequestId, "slide-images");
+  promptRequestConversationIds.set(clientRequestId, conversationIdAtStart);
+  promptActivitiesByConversationId.set(conversationIdAtStart, state.promptActivity);
+  rememberCurrentConversationSnapshot();
   scheduleConversationPersist();
   render();
 
@@ -9731,10 +10384,12 @@ async function createSlideImagesFromCurrentPage(prompt: string): Promise<void> {
       previewRef?: string;
       previewRefs?: string[];
       actionCards?: ActionCard[];
+      currentConversationId?: string;
       cancelled?: boolean;
     }>({
       type: "image.slides.start",
       clientRequestId,
+      conversationId: conversationIdAtStart,
       prompt: userMessageText,
       conversationContext: buildInfographicConversationContext(state.messages),
     });
@@ -9746,7 +10401,14 @@ async function createSlideImagesFromCurrentPage(prompt: string): Promise<void> {
       return;
     }
     const previewRefs = normalizeImagePreviewRefs(result.previewRefs, result.previewRef);
+    const resultConversationId = result.currentConversationId ?? conversationIdAtStart;
     if (!previewRefs.length) {
+      if (resultConversationId !== state.currentConversationId) {
+        clearConversationActivity(resultConversationId);
+        promptRequestConversationIds.delete(clientRequestId);
+        await persistDetachedConversation(resultConversationId);
+        return;
+      }
       removePendingImageWorkflowMessage(clientRequestId);
       state.messages = state.messages.filter((entry) => entry.id !== userMessageId);
       state.promptActivity = null;
@@ -9754,10 +10416,16 @@ async function createSlideImagesFromCurrentPage(prompt: string): Promise<void> {
       return;
     }
 
+    const imageAlt = stringsForState().images.slide;
+    if (resultConversationId !== state.currentConversationId) {
+      await hydrateGeneratedImagesForDetachedConversation(resultConversationId, workflowMessageId, previewRefs, imageAlt);
+      promptRequestConversationIds.delete(clientRequestId);
+      return;
+    }
+
     state.actionCards = result.actionCards ?? state.actionCards;
     state.promptActivity = null;
     state.streamingAssistantMessageIds.clear();
-    const imageAlt = stringsForState().images.slide;
     const streamedPreviewRefs = consumeStreamedImagePreviewRefs(clientRequestId);
     if (streamedPreviewRefs.length) {
       const missingPreviewRefs = previewRefs.filter((previewRef) => !streamedPreviewRefs.includes(previewRef));
@@ -9790,10 +10458,17 @@ async function createSlideImagesFromCurrentPage(prompt: string): Promise<void> {
     render();
     void hydrateConversationImages(messageId, previewRefs, imageAlt);
   } catch (error) {
+    const errorMessage = toUserFacingRuntimeError(error);
+    if (conversationIdAtStart !== state.currentConversationId) {
+      clearConversationActivity(conversationIdAtStart);
+      promptRequestConversationIds.delete(clientRequestId);
+      getDetachedConversationMessages(conversationIdAtStart).push(createAssistantFailureMessage(errorMessage, state.uiLocale));
+      await persistDetachedConversation(conversationIdAtStart);
+      return;
+    }
     removePendingImageWorkflowMessage(clientRequestId);
     state.promptActivity = null;
     state.streamingAssistantMessageIds.clear();
-    const errorMessage = toUserFacingRuntimeError(error);
     state.messages.push(createAssistantFailureMessage(errorMessage, state.uiLocale));
     state.initError = errorMessage;
     scheduleConversationPersist();
@@ -9947,7 +10622,7 @@ async function replayConversationFromMessage(
   messageId: string | undefined,
   editedPrompt?: string,
 ): Promise<void> {
-  if (!messageId || !canSendCurrentComposerMessage()) {
+  if (!messageId || !canStartMessageReplayInteraction()) {
     return;
   }
 
@@ -9964,21 +10639,11 @@ async function replayConversationFromMessage(
   await sendPrompt(replay.prompt, { resetThread: true });
 }
 
-function isTextFirstActionCard(card: ActionCard): boolean {
-  return (
-    card.kind === "prompt" ||
-    card.id === "summarize-video" ||
-    card.id === "summarize-current-timestamp" ||
-    card.id === "draft-blog-post" ||
-    card.id === "summarize-page"
-  );
-}
-
 function isSlideImageGenerationActionCard(card: ActionCard): boolean {
   return card.id === "profile-slide-maker-1";
 }
 
-function upsertTurnActivityTrace(activity: {
+type TurnTraceActivityInput = {
   threadId: string;
   turnId: string;
   itemId: string;
@@ -9987,12 +10652,32 @@ function upsertTurnActivityTrace(activity: {
   detail: string;
   status: "running" | "completed";
   timestampMs: number;
-}): void {
+};
+
+function upsertTurnActivityTrace(activity: TurnTraceActivityInput): void {
+  if (upsertTurnActivityTraceInMessages(state.messages, activity)) {
+    scheduleConversationPersist();
+  }
+}
+
+function upsertTurnActivityTraceForConversation(
+  conversationId: string,
+  activity: TurnTraceActivityInput,
+): void {
+  if (upsertTurnActivityTraceInMessages(getDetachedConversationMessages(conversationId), activity)) {
+    void persistDetachedConversation(conversationId);
+  }
+}
+
+function upsertTurnActivityTraceInMessages(
+  messages: ConversationMessage[],
+  activity: TurnTraceActivityInput,
+): boolean {
   if (isNoisyTraceText(activity.title) || isNoisyTraceText(activity.detail)) {
-    return;
+    return false;
   }
   const messageId = createTurnTraceMessageId(activity.threadId, activity.turnId);
-  let message = state.messages.find((entry) => entry.id === messageId);
+  let message = messages.find((entry) => entry.id === messageId);
   if (!message) {
     message = {
       id: messageId,
@@ -10000,7 +10685,7 @@ function upsertTurnActivityTrace(activity: {
       text: "",
       trace: [],
     };
-    state.messages.push(message);
+    messages.push(message);
   }
   const trace = [...(message.trace ?? [])];
   const existingIndex = trace.findIndex((item) => item.id === activity.itemId);
@@ -10022,23 +10707,36 @@ function upsertTurnActivityTrace(activity: {
     trace.push(nextItem);
   }
   message.trace = trace.slice(-MAX_TRACE_ITEMS);
-  scheduleConversationPersist();
+  return true;
 }
 
 function upsertTurnPlanTrace(plan: CodexTurnPlan): void {
+  if (upsertTurnPlanTraceInMessages(state.messages, plan)) {
+    scheduleConversationPersist();
+  }
+}
+
+function upsertTurnPlanTraceForConversation(conversationId: string, plan: CodexTurnPlan): void {
+  if (upsertTurnPlanTraceInMessages(getDetachedConversationMessages(conversationId), plan)) {
+    void persistDetachedConversation(conversationId);
+  }
+}
+
+function upsertTurnPlanTraceInMessages(messages: ConversationMessage[], plan: CodexTurnPlan): boolean {
   const steps = plan.steps
     .map((step) => ({
       step: step.step.trim(),
       status: step.status,
     }))
     .filter((step) => step.step && !isNoisyTraceText(step.step));
-  removeTurnTraceItems(plan.threadId, plan.turnId, (item) => item.id.startsWith("plan-"));
+  let changed = removeTurnTraceItemsInMessages(messages, plan.threadId, plan.turnId, (item) => item.id.startsWith("plan-"));
 
   for (const [index, step] of steps.entries()) {
     if (!step.step) {
       continue;
     }
-    upsertTurnActivityTrace({
+    changed =
+      upsertTurnActivityTraceInMessages(messages, {
       threadId: plan.threadId,
       turnId: plan.turnId,
       itemId: `plan-${index}`,
@@ -10047,8 +10745,9 @@ function upsertTurnPlanTrace(plan: CodexTurnPlan): void {
       detail: step.step,
       status: step.status === "completed" || step.status === "done" ? "completed" : "running",
       timestampMs: Date.now() + index,
-    });
+      }) || changed;
   }
+  return changed;
 }
 
 function removeTurnTraceItems(
@@ -10056,26 +10755,50 @@ function removeTurnTraceItems(
   turnId: string,
   predicate: (item: NonNullable<ConversationMessage["trace"]>[number]) => boolean,
 ): void {
-  const message = state.messages.find((entry) => entry.id === createTurnTraceMessageId(threadId, turnId));
+  if (removeTurnTraceItemsInMessages(state.messages, threadId, turnId, predicate)) {
+    scheduleConversationPersist();
+  }
+}
+
+function removeTurnTraceItemsInMessages(
+  messages: ConversationMessage[],
+  threadId: string,
+  turnId: string,
+  predicate: (item: NonNullable<ConversationMessage["trace"]>[number]) => boolean,
+): boolean {
+  const messageIndex = messages.findIndex((entry) => entry.id === createTurnTraceMessageId(threadId, turnId));
+  const message = messageIndex >= 0 ? messages[messageIndex] : undefined;
   if (!message?.trace?.length) {
-    return;
+    return false;
   }
   const nextTrace = message.trace.filter((item) => !predicate(item));
   if (nextTrace.length === message.trace.length) {
-    return;
+    return false;
   }
   message.trace = nextTrace;
   if (!nextTrace.length && message.role === "assistant" && !message.text.trim() && !(message.images ?? []).length) {
-    state.messages = state.messages.filter((entry) => entry.id !== message.id);
+    messages.splice(messageIndex, 1);
   }
-  scheduleConversationPersist();
+  return true;
 }
 
 function upsertTurnDiffTrace(diff: CodexTurnDiff): void {
-  if (!diff.diff.trim()) {
-    return;
+  if (upsertTurnDiffTraceInMessages(state.messages, diff)) {
+    scheduleConversationPersist();
   }
-  upsertTurnActivityTrace({
+}
+
+function upsertTurnDiffTraceForConversation(conversationId: string, diff: CodexTurnDiff): void {
+  if (upsertTurnDiffTraceInMessages(getDetachedConversationMessages(conversationId), diff)) {
+    void persistDetachedConversation(conversationId);
+  }
+}
+
+function upsertTurnDiffTraceInMessages(messages: ConversationMessage[], diff: CodexTurnDiff): boolean {
+  if (!diff.diff.trim()) {
+    return false;
+  }
+  return upsertTurnActivityTraceInMessages(messages, {
     threadId: diff.threadId,
     turnId: diff.turnId,
     itemId: "turn-diff",
@@ -10098,15 +10821,30 @@ function completeTurnTrace(threadId: string, turnId: string): void {
   if (!threadId || !turnId) {
     return;
   }
-  const message = state.messages.find((entry) => entry.id === createTurnTraceMessageId(threadId, turnId));
+  if (completeTurnTraceInMessages(state.messages, threadId, turnId)) {
+    scheduleConversationPersist();
+  }
+}
+
+function completeTurnTraceForConversation(conversationId: string, threadId: string, turnId: string): void {
+  if (completeTurnTraceInMessages(getDetachedConversationMessages(conversationId), threadId, turnId)) {
+    void persistDetachedConversation(conversationId);
+  }
+}
+
+function completeTurnTraceInMessages(messages: ConversationMessage[], threadId: string, turnId: string): boolean {
+  if (!threadId || !turnId) {
+    return false;
+  }
+  const message = messages.find((entry) => entry.id === createTurnTraceMessageId(threadId, turnId));
   if (!message?.trace?.length) {
-    return;
+    return false;
   }
   message.trace = message.trace.map((item) => ({
     ...item,
     status: "completed",
   }));
-  scheduleConversationPersist();
+  return true;
 }
 
 function createTurnTraceMessageId(threadId: string, turnId: string): string {
@@ -10352,6 +11090,7 @@ function setPendingProfileQuestion(itemId: string, question: ProfileAskUserQuest
     answer: "",
     createdAt: Date.now(),
   };
+  profileQuestionCardRenderRequested = true;
 }
 
 function flushStreamingAssistantDeltas(): void {
@@ -10741,9 +11480,10 @@ async function createGeneratedImageFileAttachmentsForPrompt(
   message: string,
   contextHint: string,
   activeProfileId: string,
-  existingAttachmentCount: number,
+  submittedFileAttachments: UserFileAttachment[],
 ): Promise<UserFileAttachment[]> {
-  const remainingSlots = Math.max(0, MAX_FILE_ATTACHMENTS - existingAttachmentCount);
+  const submittedRequestFileAttachments = [...submittedFileAttachments];
+  const remainingSlots = Math.max(0, MAX_FILE_ATTACHMENTS - submittedRequestFileAttachments.length);
   const limit = Math.min(remainingSlots, getGeneratedImageAttachmentLimit());
   if (limit <= 0) {
     return [];
@@ -10790,7 +11530,7 @@ async function createGeneratedImageFileAttachmentsForPrompt(
         serviceTier: state.selectedServiceTier || undefined,
         readStrategyOverride: state.currentReadStrategy,
         attachments: Array.from(state.attachments),
-        fileAttachments: [...state.fileAttachments, ...attachments],
+        fileAttachments: [...submittedRequestFileAttachments, ...attachments],
         structuredInputs: getPromptStructuredInputs(),
         selectedTabIds: state.selectedTabIds,
         historyQuery: state.historyQuery,
@@ -12454,6 +13194,7 @@ async function startNewChat(): Promise<void> {
   state.latestReroute = null;
   state.pendingProfileQuestion = null;
   profileQuestionStreamBuffers.clear();
+  profileQuestionCardRenderRequested = false;
   completedTurnIds.clear();
   render();
 }

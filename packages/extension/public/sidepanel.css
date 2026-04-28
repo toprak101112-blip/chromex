@@ -1356,6 +1356,7 @@ textarea {
   align-items: center;
   gap: 8px;
   max-width: 100%;
+  min-width: 0;
 }
 
 .summary-chip-dismiss {
@@ -5485,6 +5486,11 @@ button.primary,
   background: transparent;
 }
 
+.site-suggestion-site-icon.attachment-image {
+  color: #9fc2ff;
+  background: rgba(105, 142, 255, 0.16);
+}
+
 .site-suggestion-site-icon.profile {
   color: var(--profile-color);
   background:
@@ -5580,6 +5586,7 @@ button.primary,
   background: rgba(255, 255, 255, 0.08);
 }
 
+.file-chip-label,
 .file-chip-preview span {
   min-width: 0;
   overflow: hidden;
@@ -6420,6 +6427,18 @@ button.primary,
 
 .composer-file-list {
   flex: 1 1 auto;
+}
+
+.composer-file-list .file-chip {
+  flex: 0 1 auto;
+  min-width: 0;
+}
+
+.file-chip-label {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 .composer-attach-button,
@@ -8495,6 +8514,10 @@ button.primary,
   height: 52px;
   min-height: 52px;
   align-items: center;
+}
+
+.file-chip-preview.static {
+  cursor: default;
 }
 
 .file-chip-preview img {

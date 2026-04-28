@@ -77,4 +77,16 @@ describe("composer primary action", () => {
       }),
     ).toBe(false);
   });
+
+  test("does not re-render the primary action during IME composition", () => {
+    expect(
+      didComposerPrimaryActionChangeForDraftInput({
+        previousComposerDraft: "",
+        nextComposerDraft: "ㅇ",
+        currentWorkActive: false,
+        liveActive: false,
+        compositionInProgress: true,
+      }),
+    ).toBe(false);
+  });
 });

@@ -269,8 +269,6 @@ describe("BridgeRpcRouter", () => {
         fileAttachments: [],
         conversationContext: "Previous chat requested executive visuals.",
         model: "gpt-image-2",
-        quality: "high",
-        size: "1024x1536",
       },
     });
 
@@ -281,8 +279,6 @@ describe("BridgeRpcRouter", () => {
         fileAttachments: [],
         conversationContext: "Previous chat requested executive visuals.",
         model: "gpt-image-2",
-        quality: "high",
-        size: "1024x1536",
       },
       expect.any(Function),
     );

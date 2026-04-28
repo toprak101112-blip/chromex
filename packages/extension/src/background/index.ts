@@ -165,7 +165,6 @@ import {
 const bridge = new NativeBridgeClient();
 const UI_BRIDGE_TIMEOUT_MS = 4000;
 const UI_CONTEXT_TIMEOUT_MS = 2500;
-const CLICKED_IMAGE_SOURCE_TTL_MS = 10 * 60 * 1000;
 const PLAYWRIGHT_RUNTIME_INSTALL_TIMEOUT_MS = 10 * 60 * 1000;
 const throttleVisibleTabCapture = createVisibleTabCaptureThrottle();
 const cancelledPromptClientRequestIds = new Set<string>();
@@ -197,6 +196,12 @@ type PendingImagePromptExtraction = {
   attachment?: UserFileAttachment;
   createdAt: number;
 };
+type PendingImageAttachment = {
+  imageUrl: string;
+  pageUrl?: string;
+  createdAt: number;
+};
+type PendingContextMenuAction = "summarize-page" | "summarize-video";
 let activeAiControlTab: ReadableBrowserTab | null = null;
 const state = {
   selectedProfileId: "default",
@@ -205,7 +210,6 @@ const state = {
   selectedServiceTier: "",
   threadId: undefined as string | undefined,
   currentConversationId: undefined as string | undefined,
-  lastImageSourceUrl: undefined as string | undefined,
   browserWindowId: undefined as number | undefined,
   models: [] as CodexModelOption[],
   customProfiles: [] as ProfileTemplate[],
@@ -226,8 +230,6 @@ const state = {
   playwrightRuntime: createFallbackPlaywrightRuntime(),
   imageAssetFolder: null as UiInitPayload["imageAssetFolder"] | null,
   diagnosticLogFolder: null as UiInitPayload["diagnosticLogFolder"] | null,
-  lastImageSourceTabId: undefined as number | undefined,
-  lastImageSourceCapturedAt: 0,
   catalogRefreshPromise: null as Promise<void> | null,
   lastRequestedCatalogWorkspaceRoot: null as string | null,
   initializationPromise: null as Promise<void> | null,
@@ -325,29 +327,68 @@ chrome.tabs.onUpdated.addListener((_tabId, changeInfo, tab) => {
 });
 
 chrome.contextMenus.onClicked.addListener(async (info, tab) => {
-  if (!tab?.windowId) {
+  if (typeof tab?.windowId === "number") {
+    state.browserWindowId = tab.windowId;
+  }
+
+  const sidePanelOpenPromise = openSidePanelForContextMenu(tab).catch((error) => {
+    console.warn("Failed to open the Chromex side panel from a context menu action.", error);
+  });
+
+  if (info.menuItemId === "edit-codex-image" && info.srcUrl) {
+    await chrome.storage.session.set({
+      pendingImageAttachment: {
+        imageUrl: info.srcUrl,
+        ...(info.pageUrl || tab?.url ? { pageUrl: info.pageUrl ?? tab?.url } : {}),
+        createdAt: Date.now(),
+      },
+    });
+    await chrome.storage.session.remove("pendingAction");
+    await sidePanelOpenPromise;
+    void broadcastActiveTabSnapshot();
+    void chrome.runtime.sendMessage({ type: "ui.image-attachment.pending" }).catch(() => undefined);
     return;
   }
 
-  state.browserWindowId = tab.windowId;
-
-  if (info.menuItemId === "edit-codex-image" && info.srcUrl) {
-    state.lastImageSourceUrl = info.srcUrl;
-    state.lastImageSourceTabId = tab.id;
-    state.lastImageSourceCapturedAt = Date.now();
+  const pendingAction = resolvePendingContextMenuAction(info.menuItemId);
+  if (!pendingAction) {
+    await sidePanelOpenPromise;
+    void broadcastActiveTabSnapshot();
+    return;
   }
 
-  await chrome.sidePanel.open({ windowId: tab.windowId });
-  void broadcastActiveTabSnapshot();
   await chrome.storage.session.set({
-    pendingAction:
-      info.menuItemId === "summarize-codex-youtube"
-        ? "summarize-video"
-        : info.menuItemId === "edit-codex-image"
-          ? "edit-image"
-          : "summarize-page",
+    pendingAction: pendingAction,
   });
+  await chrome.storage.session.remove("pendingImageAttachment");
+  await sidePanelOpenPromise;
+  void broadcastActiveTabSnapshot();
+  void chrome.runtime.sendMessage({ type: "ui.context-menu-action.pending" }).catch(() => undefined);
 });
+
+async function openSidePanelForContextMenu(tab?: chrome.tabs.Tab): Promise<void> {
+  const windowId = typeof tab?.windowId === "number" ? tab.windowId : chrome.windows.WINDOW_ID_CURRENT;
+  try {
+    await chrome.sidePanel.open({ windowId });
+    return;
+  } catch (error) {
+    if (typeof tab?.id === "number") {
+      await chrome.sidePanel.open({ tabId: tab.id });
+      return;
+    }
+    throw error;
+  }
+}
+
+function resolvePendingContextMenuAction(menuItemId: unknown): PendingContextMenuAction | null {
+  if (menuItemId === "summarize-codex-youtube") {
+    return "summarize-video";
+  }
+  if (menuItemId === "ask-codex-page") {
+    return "summarize-page";
+  }
+  return null;
+}
 
 chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
   if (message.type === "page.image-prompt.extract") {
@@ -558,6 +599,12 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
         case "image.prompt.pending.take":
           sendResponse(await takePendingImagePromptExtraction());
           return;
+        case "image.attachment.pending.take":
+          sendResponse(await takePendingImageAttachment());
+          return;
+        case "context.menu.pending.take":
+          sendResponse(await takePendingContextMenuAction());
+          return;
         case "prompt.send":
           sendResponse(await handlePromptSend(message.payload));
           return;
@@ -578,7 +625,12 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
           return;
         case "image.infographic.start":
           sendResponse(
-            await handleInfographicGenerate(Boolean(message.confirmed), message.conversationContext, message.clientRequestId),
+            await handleInfographicGenerate(
+              Boolean(message.confirmed),
+              message.conversationContext,
+              message.clientRequestId,
+              message.conversationId,
+            ),
           );
           return;
         case "image.slides.start":
@@ -588,6 +640,7 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
               Boolean(message.confirmed),
               message.conversationContext,
               message.clientRequestId,
+              message.conversationId,
             ),
           );
           return;
@@ -682,8 +735,7 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
           sendResponse({ ok: true });
           return;
         case "page.image-prompt-hover.install":
-          await sendMessageToActiveTab({ type: "page.image-prompt-hover.install" });
-          sendResponse({ ok: true });
+          sendResponse(await installImagePromptHoverForTab(await getActiveTab().catch(() => null)));
           return;
         case "page.image-prompt.extract":
           sendResponse(await handlePageImagePromptExtraction(message, sender.tab));
@@ -1785,9 +1837,9 @@ async function maybeHandleAgenticImageGenerationWorkflow(
       fileAttachments,
       conversationContext: payload.contextHint ?? "",
       clientRequestId: payload.clientRequestId,
+      conversationId: payload.conversationId,
       workflow: "generated-image",
       model: "gpt-image-2",
-      quality: "high",
     },
     {
       timeoutMs: IMAGE_EDIT_TIMEOUT_MS,
@@ -2174,6 +2226,7 @@ async function handleInfographicGenerate(
   confirmed: boolean,
   conversationContextInput?: unknown,
   clientRequestIdInput?: unknown,
+  conversationIdInput?: unknown,
 ) {
   const gate = await ensureOperationAllowed("image.edit", confirmed);
   if (!gate.ok) {
@@ -2198,10 +2251,9 @@ async function handleInfographicGenerate(
       fileAttachments,
       conversationContext: normalizeInfographicConversationContext(conversationContextInput),
       clientRequestId: normalizeOptionalClientRequestId(clientRequestIdInput),
+      conversationId: normalizeOptionalConversationId(conversationIdInput),
       workflow: "infographic",
       model: "gpt-image-2",
-      quality: "high",
-      size: "1024x1536",
     },
     {
       timeoutMs: IMAGE_EDIT_TIMEOUT_MS,
@@ -2212,6 +2264,7 @@ async function handleInfographicGenerate(
   return {
     workflow: "infographic",
     ...result,
+    currentConversationId: normalizeOptionalConversationId(conversationIdInput),
     previewRefs: normalizeImageGeneratePreviewRefs(result.previewRefs, result.previewRef),
     actionCards: context.actionCards,
   };
@@ -2222,6 +2275,7 @@ async function handleSlideDeckImageGenerate(
   confirmed: boolean,
   conversationContextInput?: unknown,
   clientRequestIdInput?: unknown,
+  conversationIdInput?: unknown,
 ) {
   const gate = await ensureOperationAllowed("image.edit", confirmed);
   if (!gate.ok) {
@@ -2246,10 +2300,9 @@ async function handleSlideDeckImageGenerate(
       fileAttachments,
       conversationContext: normalizeInfographicConversationContext(conversationContextInput),
       clientRequestId: normalizeOptionalClientRequestId(clientRequestIdInput),
+      conversationId: normalizeOptionalConversationId(conversationIdInput),
       workflow: "slide-images",
       model: "gpt-image-2",
-      quality: "high",
-      size: "1536x1024",
     },
     {
       timeoutMs: IMAGE_EDIT_TIMEOUT_MS,
@@ -2260,6 +2313,7 @@ async function handleSlideDeckImageGenerate(
   return {
     workflow: "slide-images",
     ...result,
+    currentConversationId: normalizeOptionalConversationId(conversationIdInput),
     previewRefs: normalizeImageGeneratePreviewRefs(result.previewRefs, result.previewRef),
     actionCards: context.actionCards,
   };
@@ -2428,6 +2482,14 @@ function normalizeOptionalClientRequestId(value: unknown): string | undefined {
   return trimmed ? trimmed.slice(0, 160) : undefined;
 }
 
+function normalizeOptionalConversationId(value: unknown): string | undefined {
+  if (typeof value !== "string") {
+    return undefined;
+  }
+  const trimmed = value.trim();
+  return trimmed ? trimmed.slice(0, 160) : undefined;
+}
+
 async function buildVoiceSessionStartParamsWithContext(message: Record<string, unknown>): Promise<Record<string, unknown>> {
   const params = buildVoiceSessionStartParams(message, state.threadId);
   if (typeof params.prompt === "string" && params.prompt.trim()) {
@@ -2568,6 +2630,9 @@ async function collectAutomaticDocumentAttachments(
 }
 
 async function ensureContentScript(tabId: number, url?: string): Promise<void> {
+  if (await hasActiveContentScript(tabId)) {
+    return;
+  }
   try {
     await chrome.scripting.executeScript({
       target: { tabId },
@@ -2586,6 +2651,15 @@ async function ensureContentScript(tabId: number, url?: string): Promise<void> {
       }
     }
     throw toFriendlyPageAccessError(url, error);
+  }
+}
+
+async function hasActiveContentScript(tabId: number): Promise<boolean> {
+  try {
+    const response = await chrome.tabs.sendMessage(tabId, { type: "page.ping" });
+    return typeof response === "object" && response !== null && (response as { ok?: unknown }).ok === true;
+  } catch {
+    return false;
   }
 }
 
@@ -2620,7 +2694,7 @@ async function broadcastActiveTabSnapshot(): Promise<void> {
   if (!activeTab) {
     return;
   }
-  void installImagePromptHoverForTab(activeTab);
+  void installImagePromptHoverForTab(activeTab).catch(() => undefined);
   const currentTab = tabToOpenTabContext(activeTab);
   await chrome.runtime
     .sendMessage({
@@ -2632,22 +2706,25 @@ async function broadcastActiveTabSnapshot(): Promise<void> {
     .catch(() => undefined);
 }
 
-async function installImagePromptHoverForTab(tab: chrome.tabs.Tab | undefined | null): Promise<void> {
+async function installImagePromptHoverForTab(
+  tab: chrome.tabs.Tab | undefined | null,
+): Promise<{ ok: true; installed: boolean }> {
   if (!tab?.id || !tab.url || !getCurrentPageSupport(tab.url).available) {
-    return;
+    return { ok: true, installed: false };
   }
   await sendMessageToTab(tab as chrome.tabs.Tab & { id: number; url: string }, {
     type: "page.image-prompt-hover.install",
-  }).catch(() => undefined);
+  });
+  return { ok: true, installed: true };
 }
 
 function normalizePendingImagePromptExtraction(message: Record<string, unknown>): PendingImagePromptExtraction | null {
   const imageUrl = typeof message.imageUrl === "string" ? message.imageUrl.trim() : "";
-  if (!isHttpUrl(imageUrl)) {
-    return null;
-  }
   const imageCandidate = normalizePromptImageCandidate(message.imageCandidate, imageUrl);
   const attachment = normalizePromptImageAttachment(message.attachment);
+  if (!isSupportedImagePromptSource(imageUrl) || !(attachment || imageCandidate || isFetchableImagePromptSource(imageUrl))) {
+    return null;
+  }
   return {
     imageUrl,
     createdAt: Date.now(),
@@ -2767,6 +2844,16 @@ function isHttpUrl(value: string): boolean {
   }
 }
 
+function isSupportedImagePromptSource(value: string): boolean {
+  const normalized = value.trim().toLowerCase();
+  return isHttpUrl(value) || normalized.startsWith("blob:") || normalized.startsWith("data:image/");
+}
+
+function isFetchableImagePromptSource(value: string): boolean {
+  const normalized = value.trim().toLowerCase();
+  return isHttpUrl(value) || normalized.startsWith("data:image/");
+}
+
 async function handlePageImagePromptExtraction(
   message: Record<string, unknown>,
   tab: chrome.tabs.Tab | undefined,
@@ -2814,14 +2901,16 @@ async function createOnlineImagePromptAttachment(
           return null;
         })
     : null;
-  const input = visibleInput ?? await fetchImageUrlAsEditableInput(extraction.imageUrl, filenameFromImageUrl(extraction.imageUrl))
-    .catch((error) => {
-      void recordDiagnostic("extension.image_prompt.remote_fetch.failed", {
-        url: extraction.imageUrl,
-        error: toErrorMessage(error),
-      });
-      return null;
-    });
+  const input = visibleInput ?? (isFetchableImagePromptSource(extraction.imageUrl)
+    ? await fetchImageUrlAsEditableInput(extraction.imageUrl, filenameFromImageUrl(extraction.imageUrl))
+        .catch((error) => {
+          void recordDiagnostic("extension.image_prompt.remote_fetch.failed", {
+            url: extraction.imageUrl,
+            error: toErrorMessage(error),
+          });
+          return null;
+        })
+    : null);
 
   if (!input?.base64) {
     return null;
@@ -2835,7 +2924,7 @@ async function createOnlineImagePromptAttachment(
     lastModified: Date.now(),
     base64: input.base64,
     kind: "image",
-    sourceUrl: extraction.imageUrl,
+    ...(isHttpUrl(extraction.imageUrl) ? { sourceUrl: extraction.imageUrl } : {}),
   };
 }
 
@@ -2864,6 +2953,40 @@ async function takePendingImagePromptExtraction(): Promise<{ extraction?: Pendin
   }
   const extraction = normalizePendingImagePromptExtraction(value as Record<string, unknown>);
   return extraction ? { extraction } : {};
+}
+
+async function takePendingImageAttachment(): Promise<{ attachment?: PendingImageAttachment }> {
+  const stored = await chrome.storage.session.get("pendingImageAttachment");
+  await chrome.storage.session.remove("pendingImageAttachment");
+  const attachment = normalizePendingImageAttachment(stored.pendingImageAttachment);
+  return attachment ? { attachment } : {};
+}
+
+async function takePendingContextMenuAction(): Promise<{ action?: PendingContextMenuAction }> {
+  const stored = await chrome.storage.session.get("pendingAction");
+  await chrome.storage.session.remove("pendingAction");
+  const action = normalizePendingContextMenuAction(stored.pendingAction);
+  return action ? { action } : {};
+}
+
+function normalizePendingContextMenuAction(value: unknown): PendingContextMenuAction | null {
+  return value === "summarize-page" || value === "summarize-video" ? value : null;
+}
+
+function normalizePendingImageAttachment(value: unknown): PendingImageAttachment | null {
+  if (!value || typeof value !== "object") {
+    return null;
+  }
+  const input = value as Record<string, unknown>;
+  const imageUrl = typeof input.imageUrl === "string" ? input.imageUrl.trim() : "";
+  if (!isFetchableImagePromptSource(imageUrl)) {
+    return null;
+  }
+  return {
+    imageUrl,
+    createdAt: Math.max(0, Number(input.createdAt) || Date.now()),
+    ...(typeof input.pageUrl === "string" && input.pageUrl.trim() ? { pageUrl: input.pageUrl.trim() } : {}),
+  };
 }
 
 async function sendMessageToActiveTab(message: Record<string, unknown>) {
@@ -3008,24 +3131,7 @@ async function getEditableImageInput() {
   void recordDiagnostic("extension.image.input.resolve.start", {
     tabId: activeTab.id,
     url: activeTab.url,
-    hasClickedImage: isFreshClickedImageSource(activeTab),
   });
-  if (isFreshClickedImageSource(activeTab)) {
-    try {
-      const input = await fetchImageUrlAsEditableInput(state.lastImageSourceUrl, "clicked-page-image.jpg");
-      void recordDiagnostic("extension.image.input.clicked.ready", {
-        mimeType: input.mimeType,
-        filename: input.filename ?? null,
-      });
-      return input;
-    } catch (error) {
-      void recordDiagnostic("extension.image.input.clicked.failed", {
-        error: toErrorMessage(error),
-      });
-      // Fall back to DOM-selected image or visible tab capture below.
-    }
-  }
-
   const visiblePageImage = await getVisiblePageImageInput(activeTab).catch(() => null);
   if (visiblePageImage) {
     void recordDiagnostic("extension.image.input.visible-page.ready", {
@@ -3042,14 +3148,6 @@ async function getEditableImageInput() {
     filename: input.filename ?? null,
   });
   return input;
-}
-
-function isFreshClickedImageSource(activeTab: chrome.tabs.Tab & { id: number }): boolean {
-  return Boolean(
-    state.lastImageSourceUrl &&
-      state.lastImageSourceTabId === activeTab.id &&
-      Date.now() - state.lastImageSourceCapturedAt <= CLICKED_IMAGE_SOURCE_TTL_MS,
-  );
 }
 
 async function getVisiblePageImageInput(activeTab: chrome.tabs.Tab & { id: number; url: string; windowId: number }) {
@@ -3762,9 +3860,8 @@ async function sendMessageToTab(
   activeTab: chrome.tabs.Tab & { id: number; url: string },
   message: Record<string, unknown>,
 ): Promise<unknown> {
-  await ensureContentScript(activeTab.id, activeTab.url);
-
   try {
+    await ensureContentScript(activeTab.id, activeTab.url);
     return await chrome.tabs.sendMessage(activeTab.id, message);
   } catch (error) {
     if (shouldAttemptTabOriginRecovery(activeTab.url, error) && (await hasTabOriginPermission(activeTab.url))) {
@@ -3776,6 +3873,7 @@ async function sendMessageToTab(
       }
     }
     if (isRetryableRuntimeMessageError(error)) {
+      await sleepMs(120);
       await ensureContentScript(activeTab.id, activeTab.url);
       try {
         return await chrome.tabs.sendMessage(activeTab.id, message);

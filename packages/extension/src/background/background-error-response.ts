@@ -3,6 +3,7 @@ import {
   type BrowserPermissionRequiredError,
 } from "../browser-permission-errors.js";
 import { isSitePermissionRequiredError, type SitePermissionRequiredError } from "../page-access.js";
+import { isRetryableRuntimeMessageError } from "../runtime-errors.js";
 
 export type ExpectedPermissionError = BrowserPermissionRequiredError | SitePermissionRequiredError;
 
@@ -28,6 +29,9 @@ export function toExpectedPermissionErrorResponse(error: unknown): ExpectedPermi
 
 export function shouldLogBackgroundMessageError(error: unknown): boolean {
   if (toExpectedPermissionErrorResponse(error) !== null) {
+    return false;
+  }
+  if (isRetryableRuntimeMessageError(error)) {
     return false;
   }
 
