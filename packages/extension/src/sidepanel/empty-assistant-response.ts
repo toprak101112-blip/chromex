@@ -59,6 +59,28 @@ export function clearEmptyAssistantResponseNotice(input: ClearEmptyAssistantResp
   return true;
 }
 
+export function clearResolvedEmptyAssistantResponseNotices(messages: ConversationMessage[]): boolean {
+  let changed = false;
+
+  for (let index = 0; index < messages.length; index += 1) {
+    const message = messages[index];
+    if (message?.role !== "assistant" || !isEmptyAssistantResponseNoticeText(message.text)) {
+      continue;
+    }
+
+    const nextUserIndex = findNextUserMessageIndex(messages, index + 1);
+    const trailingMessages = messages.slice(index + 1, nextUserIndex >= 0 ? nextUserIndex : messages.length);
+    if (!trailingMessages.some((entry) => hasAssistantResponseContent(entry, message.id))) {
+      continue;
+    }
+
+    message.text = "";
+    changed = true;
+  }
+
+  return changed;
+}
+
 export function isEmptyAssistantResponseNoticeText(text: string): boolean {
   const normalized = text.trim();
   return (
@@ -109,6 +131,15 @@ function findLatestUserMessage(messages: ConversationMessage[]): ConversationMes
     }
   }
   return null;
+}
+
+function findNextUserMessageIndex(messages: ConversationMessage[], startIndex: number): number {
+  for (let index = startIndex; index < messages.length; index += 1) {
+    if (messages[index]?.role === "user") {
+      return index;
+    }
+  }
+  return -1;
 }
 
 function createTurnTraceMessageId(threadId: string, turnId: string): string {

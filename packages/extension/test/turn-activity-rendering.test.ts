@@ -3,12 +3,16 @@ import { resolve } from "node:path";
 
 import { describe, expect, test } from "vitest";
 
-const sidepanelSource = readFileSync(resolve(process.cwd(), "src/sidepanel/index.ts"), "utf8");
-const i18nSource = readFileSync(resolve(process.cwd(), "src/sidepanel/i18n.ts"), "utf8");
-const traceFormattingSource = readFileSync(resolve(process.cwd(), "src/sidepanel/message-trace-formatting.ts"), "utf8");
-const stateSource = readFileSync(resolve(process.cwd(), "src/sidepanel/sidepanel-state.ts"), "utf8");
-const typesSource = readFileSync(resolve(process.cwd(), "src/types.ts"), "utf8");
-const stylesSource = readFileSync(resolve(process.cwd(), "public/sidepanel.css"), "utf8");
+function readNormalizedSource(path: string): string {
+  return readFileSync(resolve(process.cwd(), path), "utf8").replace(/\r\n/g, "\n");
+}
+
+const sidepanelSource = readNormalizedSource("src/sidepanel/index.ts");
+const i18nSource = readNormalizedSource("src/sidepanel/i18n.ts");
+const traceFormattingSource = readNormalizedSource("src/sidepanel/message-trace-formatting.ts");
+const stateSource = readNormalizedSource("src/sidepanel/sidepanel-state.ts");
+const typesSource = readNormalizedSource("src/types.ts");
+const stylesSource = readNormalizedSource("public/sidepanel.css");
 
 describe("turn activity rendering", () => {
   test("renders sanitized Codex work activity as inline text rather than a separate card", () => {

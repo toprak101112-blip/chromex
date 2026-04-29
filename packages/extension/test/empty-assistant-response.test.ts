@@ -4,6 +4,7 @@ import { resolve } from "node:path";
 
 import {
   clearEmptyAssistantResponseNotice,
+  clearResolvedEmptyAssistantResponseNotices,
   createEmptyAssistantResponseNotice,
   getStructuredInputNamesForEmptyResponseNotice,
   shouldShowEmptyAssistantResponseNotice,
@@ -92,6 +93,48 @@ describe("empty assistant response fallback", () => {
 
     expect(clearEmptyAssistantResponseNotice({ messages, threadId: "thread-1", turnId: "turn-1" })).toBe(true);
     expect(messages.find((message) => message.id === "turn-trace-thread-1-turn-1")?.text).toBe("");
+  });
+
+  test("clears a stale empty-response notice when the recovered assistant text arrives without turn ids", () => {
+    const messages: ConversationMessage[] = [
+      userMessage("user-1"),
+      {
+        id: "turn-trace-thread-1-turn-1",
+        role: "assistant",
+        text: createEmptyAssistantResponseNotice({ locale: "ko", structuredInputNames: [] }),
+        trace: [{ id: "tool-1", kind: "tool", title: "Tool result ready", detail: "userMessage", status: "completed", timestampMs: 1 }],
+      },
+      {
+        id: "assistant-response-1",
+        role: "assistant",
+        text: "가장 가까운 유형은 소셜 카드입니다.",
+      },
+    ];
+
+    expect(clearResolvedEmptyAssistantResponseNotices(messages)).toBe(true);
+    expect(messages.find((message) => message.id === "turn-trace-thread-1-turn-1")?.text).toBe("");
+  });
+
+  test("keeps an older empty-response notice when a later user message starts a different turn", () => {
+    const messages: ConversationMessage[] = [
+      userMessage("user-1"),
+      {
+        id: "turn-trace-thread-1-turn-1",
+        role: "assistant",
+        text: createEmptyAssistantResponseNotice({ locale: "ko", structuredInputNames: [] }),
+      },
+      userMessage("user-2"),
+      {
+        id: "assistant-response-2",
+        role: "assistant",
+        text: "다음 요청에 대한 답변입니다.",
+      },
+    ];
+
+    expect(clearResolvedEmptyAssistantResponseNotices(messages)).toBe(false);
+    expect(messages.find((message) => message.id === "turn-trace-thread-1-turn-1")?.text).toContain(
+      "Codex에서 최종 응답을 받지 못했습니다.",
+    );
   });
 
   test("defers empty-response fallback after turn completion so late message.completed can win", () => {

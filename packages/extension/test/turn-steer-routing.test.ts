@@ -16,7 +16,7 @@ describe("turn steer routing", () => {
     ).toBe(true);
   });
 
-  test("routes direct composer text into steering while current work is active before activeTurn reaches the sidepanel", () => {
+  test("waits for the active turn before routing composer text into steering", () => {
     expect(
       shouldSendComposerAsTurnSteer({
         draft: "playwright말고 체크 가능하지 않아?",
@@ -26,7 +26,7 @@ describe("turn steer routing", () => {
         currentWorkActive: true,
         source: "composer",
       }),
-    ).toBe(true);
+    ).toBe(false);
   });
 
   test("keeps programmatic prompts out of the steer path while work is active", () => {

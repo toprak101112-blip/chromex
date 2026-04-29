@@ -22,5 +22,5 @@ export function shouldSendComposerAsTurnSteer(input: TurnSteerRoutingInput): boo
     return Boolean(input.threadId && input.activeTurn.threadId === input.threadId);
   }
 
-  return Boolean(input.currentWorkActive);
+  return false;
 }

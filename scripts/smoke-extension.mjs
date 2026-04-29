@@ -672,10 +672,11 @@ try {
   await page.locator("#app-menu-toggle").click();
   const appMenuState = await page.evaluate(() => ({
     menu: Boolean(document.querySelector(".app-menu")),
-    contextItem: Boolean(document.querySelector('[data-menu-view="context"]')),
+    skillsItem: Boolean(document.querySelector('[data-menu-view="skills"]')),
+    pluginsItem: Boolean(document.querySelector('[data-menu-view="plugins"]')),
     settingsItem: Boolean(document.querySelector('[data-menu-view="workspace"]')),
   }));
-  if (!appMenuState.menu || !appMenuState.contextItem || !appMenuState.settingsItem) {
+  if (!appMenuState.menu || !appMenuState.skillsItem || !appMenuState.pluginsItem || !appMenuState.settingsItem) {
     throw new Error(`Smoke test failed: app menu destinations did not render (${JSON.stringify(appMenuState)}).`);
   }
   await page.locator(".composer-frame").click();
@@ -685,31 +686,6 @@ try {
   if (dismissedAppMenuState.menu) {
     throw new Error(`Smoke test failed: app menu did not close on outside click (${JSON.stringify(dismissedAppMenuState)}).`);
   }
-  await page.locator("#app-menu-toggle").click();
-  await page.locator('[data-menu-view="context"]').click();
-  const contextSnapshot = await page.evaluate(() => window.__CODEX_SIDEPANEL_SMOKE__?.snapshot() ?? null);
-  if (!contextSnapshot || contextSnapshot.activeView !== "context") {
-    throw new Error(`Smoke test failed: app menu did not switch to context view (${JSON.stringify(contextSnapshot)}).`);
-  }
-  const contextCleanupState = await page.evaluate(() => ({
-    invocationCopyVisible: Array.from(document.querySelectorAll(".context-view .stack-copy")).some((element) =>
-      /@open-tabs|Page and image context|페이지와 이미지는 대화 맥락/i.test(element.textContent ?? ""),
-    ),
-    connectedAppsVisible: /Connected apps|연결된 앱/i.test(document.querySelector(".context-view")?.textContent ?? ""),
-    codexPluginsVisible: /Codex plugins|Codex 플러그인/i.test(document.querySelector(".context-view")?.textContent ?? ""),
-    appButtons: document.querySelectorAll(".context-view [data-app-id]").length,
-    pluginButtons: document.querySelectorAll(".context-view [data-plugin-id]").length,
-  }));
-  if (
-    contextCleanupState.invocationCopyVisible ||
-    contextCleanupState.connectedAppsVisible ||
-    contextCleanupState.codexPluginsVisible ||
-    contextCleanupState.appButtons !== 0 ||
-    contextCleanupState.pluginButtons !== 0
-  ) {
-    throw new Error(`Smoke test failed: context view still renders unavailable sections (${JSON.stringify(contextCleanupState)}).`);
-  }
-
   const composerControls = await page.evaluate(() => ({
     modelMenuTrigger: Boolean(document.querySelector("#composer-model-menu-trigger")),
     nativeModelSelect: Boolean(document.querySelector("#composer-model-select")),

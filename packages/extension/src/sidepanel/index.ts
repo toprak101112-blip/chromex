@@ -48,6 +48,7 @@ import { isSafeMessageImageUrl, renderMessageContentHtml } from "./message-conte
 import { createExternalImagePreviewUrl } from "./external-image-preview.js";
 import {
   clearEmptyAssistantResponseNotice,
+  clearResolvedEmptyAssistantResponseNotices,
   createEmptyAssistantResponseNotice,
   getStructuredInputNamesForEmptyResponseNotice,
   shouldShowEmptyAssistantResponseNotice,
@@ -1004,6 +1005,7 @@ chrome.runtime.onMessage.addListener((message) => {
     if (!isCurrentConversationEvent && eventConversationId) {
       upsertAssistantMessageForConversation(eventConversationId, itemId, event.text ?? "", false);
       clearEmptyAssistantResponseNoticeForTurn(event.threadId ?? "", event.turnId ?? "", eventConversationId);
+      clearResolvedEmptyAssistantResponseNotices(getDetachedConversationMessages(eventConversationId));
       completeTurnTraceForConversation(eventConversationId, event.threadId ?? "", event.turnId ?? "");
       clearConversationActivity(eventConversationId);
       renderConversationListIfVisible();
@@ -1025,6 +1027,7 @@ chrome.runtime.onMessage.addListener((message) => {
       upsertAssistantMessage(itemId, event.text ?? "", false, event);
     }
     clearEmptyAssistantResponseNoticeForTurn(event.threadId ?? "", event.turnId ?? "", eventConversationId);
+    clearResolvedEmptyAssistantResponseNotices(state.messages);
     if (!state.promptActivity && !state.activeTurn?.turnId) {
       state.streamingAssistantMessageIds.delete(messageId);
     }
@@ -8553,13 +8556,14 @@ function canSendCurrentComposerMessage(
   options: { allowSteer?: boolean } = {},
 ): boolean {
   const currentWorkActive = isCurrentPromptWorkActive();
-  if (currentWorkActive && !options.allowSteer) {
+  const steerTurnActive = Boolean(options.allowSteer && isCurrentTurnActive());
+  if (currentWorkActive && !steerTurnActive) {
     return false;
   }
 
   return canSendComposerMessage({
     draft,
-    turnActive: Boolean(options.allowSteer && currentWorkActive),
+    turnActive: steerTurnActive,
     promptActivityActive: Boolean(state.promptActivity),
     streamingAssistantActive: state.streamingAssistantMessageIds.size > 0,
     submissionStartingActive: promptSubmissionBootstrapInFlight,
@@ -10125,7 +10129,7 @@ function bindEvents(): void {
       return;
     }
     event.preventDefault();
-    if (!canSendCurrentComposerMessage(undefined, { allowSteer: true })) {
+    if (!canSendCurrentComposerMessage(undefined, { allowSteer: isCurrentTurnActive() })) {
       rememberComposerInteraction(event.currentTarget as HTMLTextAreaElement);
       return;
     }
