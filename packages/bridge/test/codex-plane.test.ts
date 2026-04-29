@@ -25,8 +25,9 @@ class FakeCodexClient {
       imageGenerationItems?: Array<Record<string, unknown>>;
       turnCompletedItems?: Array<Record<string, unknown>>;
       turnStartFailures?: string[];
+      appListPages?: Array<{ data?: Array<Record<string, unknown>>; nextCursor?: string | null }>;
       accountReadResult?: {
-        account?: { type?: string; planType?: string | null } | null;
+        account?: { type?: string; email?: string | null; planType?: string | null } | null;
         planType?: string | null;
         requiresOpenaiAuth?: boolean;
       };
@@ -47,6 +48,11 @@ class FakeCodexClient {
     }
     if (method === "skills/list") {
       return { data: [] };
+    }
+    if (method === "app/list") {
+      const pages = this.options.appListPages ?? [{ data: [] }];
+      const pageIndex = params?.cursor ? Number(params.cursor) : 0;
+      return pages[Number.isFinite(pageIndex) ? pageIndex : 0] ?? { data: [] };
     }
     if (method === "thread/start") {
       return { thread: { id: "thread-1" } };
@@ -329,6 +335,144 @@ describe("AppServerCodexPlane", () => {
     });
   });
 
+  test("enables app and plugin runtime features before loading the app catalog", async () => {
+    const client = new FakeCodexClient({
+      appListPages: [
+        {
+          data: [
+            {
+              id: "connector_2128aebfecb84f64a069897515042a44",
+              name: "Gmail",
+              description: "Read Gmail",
+              isAccessible: true,
+              isEnabled: true,
+            },
+          ],
+        },
+      ],
+    });
+    const plane = new AppServerCodexPlane({
+      client: client as never,
+      harness: harness as never,
+      secrets: new InMemoryBridgeSecrets(),
+    });
+
+    await plane.listApps({ threadId: "stale-thread" });
+
+    expect(client.calls[0]).toEqual({
+      method: "experimentalFeature/enablement/set",
+      params: { enablement: { apps: true, plugins: true } },
+    });
+    expect(client.calls[1]).toEqual({
+      method: "app/list",
+      params: { limit: 100 },
+    });
+  });
+
+  test("expands plugin mentions to connected app mentions before starting a turn", async () => {
+    const client = new FakeCodexClient({
+      emitImageBeforeTurnCompleted: false,
+      agentText: "Done",
+      appListPages: [
+        {
+          data: [
+            {
+              id: "connector_2128aebfecb84f64a069897515042a44",
+              name: "Gmail",
+              description: "Read Gmail",
+              isAccessible: true,
+              isEnabled: true,
+            },
+          ],
+        },
+      ],
+    });
+    const plane = new AppServerCodexPlane({
+      client: client as never,
+      harness: harness as never,
+      secrets: new InMemoryBridgeSecrets(),
+    });
+
+    await plane.sendPrompt(
+      {
+        ...promptParams,
+        threadId: "thread-1",
+        structuredInputs: [
+          {
+            id: "gmail@openai-curated",
+            type: "mention",
+            name: "Gmail",
+            path: "plugin://gmail@openai-curated",
+            token: "$gmail",
+          },
+        ],
+      },
+      () => undefined,
+    );
+
+    const turnStartInput = client.calls.find((call) => call.method === "turn/start")?.params?.input as
+      | Array<{ type: string; path?: string }>
+      | undefined;
+    expect(client.calls.find((call) => call.method === "app/list")?.params).toMatchObject({
+      forceRefetch: true,
+    });
+    expect(turnStartInput?.filter((item) => item.type === "mention").map((item) => item.path)).toEqual([
+      "app://connector_2128aebfecb84f64a069897515042a44",
+      "plugin://gmail@openai-curated",
+    ]);
+  });
+
+  test("allows app-server approval flow when a turn uses explicit app or plugin mentions", async () => {
+    const client = new FakeCodexClient({
+      emitImageBeforeTurnCompleted: false,
+      agentText: "Done",
+      appListPages: [
+        {
+          data: [
+            {
+              id: "connector_google_calendar",
+              name: "Google Calendar",
+              description: "Manage events",
+              isAccessible: true,
+              isEnabled: true,
+            },
+          ],
+        },
+      ],
+    });
+    const plane = new AppServerCodexPlane({
+      client: client as never,
+      harness: harness as never,
+      secrets: new InMemoryBridgeSecrets(),
+    });
+
+    await plane.sendPrompt(
+      {
+        ...promptParams,
+        threadId: "thread-1",
+        structuredInputs: [
+          {
+            id: "google-calendar@openai-curated",
+            type: "mention",
+            name: "google-calendar",
+            path: "plugin://google-calendar@openai-curated",
+            token: "$google_calendar",
+          },
+        ],
+      },
+      () => undefined,
+    );
+
+    const turnStartParams = client.calls.find((call) => call.method === "turn/start")?.params;
+    const turnStartInput = turnStartParams?.input as Array<{ type: string; path?: string }> | undefined;
+    expect(turnStartParams?.approvalPolicy).not.toBe("never");
+    expect(turnStartParams?.approvalsReviewer).toBe("auto_review");
+    expect(turnStartInput?.filter((item) => item.type === "mention").map((item) => item.path)).toEqual([
+      "app://connector_google_calendar",
+      "plugin://google-calendar@openai-curated",
+    ]);
+  });
+
   test("reports API-key app-server accounts as authenticated multimodal-capable sessions", async () => {
     const client = new FakeCodexClient({
       accountReadResult: {
@@ -372,7 +516,7 @@ describe("AppServerCodexPlane", () => {
   test("reports Codex account plan type when app-server exposes it", async () => {
     const client = new FakeCodexClient({
       accountReadResult: {
-        account: { type: "chatgpt", planType: "plus" },
+        account: { type: "chatgpt", email: "codex@example.com", planType: "plus" },
       },
     });
     const plane = new AppServerCodexPlane({
@@ -383,6 +527,7 @@ describe("AppServerCodexPlane", () => {
 
     await expect(plane.accountStatus()).resolves.toMatchObject({
       authMode: "chatgpt",
+      email: "codex@example.com",
       planType: "plus",
     });
   });
@@ -1266,10 +1411,15 @@ describe("CodexImagePlane", () => {
       (item) => typeof item === "object" && item !== null && (item as { type?: unknown }).type === "localImage",
     );
 
-    expect(textItem?.text).toContain("Generate a new infographic image");
+    expect(textItem?.text).toContain("Generate a new visual explainer image");
     expect(textItem?.text).toContain("gpt-image-2");
-    expect(textItem?.text).toContain("Use case: infographic");
+    expect(textItem?.text).toContain("Use case: current-page-visual-explainer");
     expect(textItem?.text).not.toContain("Render target:");
+    expect(textItem?.text).not.toContain("legible on mobile");
+    expect(textItem?.text).not.toContain("vertical");
+    expect(textItem?.text).not.toContain("portrait");
+    expect(textItem?.text).not.toContain("aspect ratio");
+    expect(textItem?.text).not.toContain("1024x1536");
     expect(textItem?.text).toContain("PRIVATE PAGE CONTEXT");
     expect(textItem?.text).toContain("Do not invent metrics");
     expect(textItem?.text).toContain("use reference chaining");

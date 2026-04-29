@@ -1093,6 +1093,62 @@ describe("agentic route plan normalization", () => {
     expect(plan.notes.join(" ")).toContain("explicitly attached");
   });
 
+  test("keeps only planner-selected available structured app, plugin, or MCP inputs", () => {
+    const plan = normalizeAgenticRoutePlan(
+      {
+        source: "llm",
+        task: "general",
+        contextRequests: [],
+        structuredInputIds: ["gmail", "unknown-input", "mcp:google-calendar", "gmail"],
+        intent: {
+          summary: "Check Gmail and Calendar through connected tools.",
+          action: "answer",
+          target: "conversation",
+          constraints: [],
+          needsClarification: false,
+        },
+        imageEdit: {
+          shouldEdit: false,
+          target: "none",
+          reason: "No image workflow.",
+        },
+        browserControl: {
+          shouldControl: true,
+          mode: "playwright",
+          surface: "new-tab",
+          reason: "The service has a web UI.",
+        },
+        confidence: 0.9,
+      },
+      {
+        ...input,
+        availableStructuredInputs: [
+          {
+            id: "gmail",
+            type: "mention",
+            name: "Gmail",
+            path: "app://gmail",
+            token: "$gmail",
+          },
+          {
+            id: "mcp:google-calendar",
+            type: "mention",
+            name: "Google Calendar",
+            path: "mcp://google-calendar",
+            token: "$google-calendar",
+          },
+        ],
+      },
+    );
+
+    expect(plan.structuredInputIds).toEqual(["gmail", "mcp:google-calendar"]);
+    expect(plan.browserControl).toMatchObject({
+      shouldControl: false,
+      mode: "dom",
+      surface: "active-tab",
+    });
+  });
+
   test("maps agentic plans to the legacy prompt routing contract", () => {
     const agenticPlan = normalizeAgenticRoutePlan(
       {

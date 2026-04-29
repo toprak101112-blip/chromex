@@ -199,6 +199,7 @@ export interface CodexAppOption {
   isAccessible: boolean;
   isEnabled: boolean;
   installUrl?: string;
+  iconUrl?: string;
 }
 
 export interface CodexPluginOption {
@@ -210,7 +211,30 @@ export interface CodexPluginOption {
   token: string;
   installed: boolean;
   enabled: boolean;
+  iconUrl?: string;
   capabilities: string[];
+}
+
+export type CodexMcpAuthStatus = "unsupported" | "notLoggedIn" | "bearerToken" | "oauth" | string;
+
+export interface CodexMcpToolOption {
+  name: string;
+  description: string;
+  inputSchema: Record<string, unknown> | null;
+}
+
+export interface CodexMcpServerOption {
+  id: string;
+  name: string;
+  description: string;
+  path: string;
+  token: string;
+  authStatus: CodexMcpAuthStatus;
+  isAuthenticated: boolean;
+  toolCount: number;
+  tools: CodexMcpToolOption[];
+  resourceCount: number;
+  resourceTemplateCount: number;
 }
 
 export type CodexStructuredInput =
@@ -229,6 +253,7 @@ export type CodexStructuredInput =
       path: string;
       description?: string;
       token: string;
+      iconUrl?: string;
     };
 
 export interface CodexThreadSummary {
@@ -456,6 +481,7 @@ export interface AgenticRoutePlan {
   task: PromptRoutingTask;
   contextMode: PromptRoutingContextMode;
   contextRequests: AgenticContextRequest[];
+  structuredInputIds: string[];
   historyQuery: string;
   requiresVision: boolean;
   pageReadStrategy: ReadStrategy | "auto";
@@ -481,6 +507,7 @@ export interface AgenticRouteInput {
   selectedTabIds?: number[];
   historyQuery?: string;
   locale?: string;
+  availableStructuredInputs?: CodexStructuredInput[];
   activeTab?: {
     title?: string;
     url?: string;

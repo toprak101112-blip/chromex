@@ -96,6 +96,12 @@ describe("composer layout css", () => {
     expect(readFinalDeclaration(".command-popover .suggestion.keyboard-active", "transform")).toBe("none");
   });
 
+  test("highlights mention keyboard selection like hover state", () => {
+    expect(readFinalDeclaration(".tab-mention-row.keyboard-active", "background")).toBe("#3b3d3d");
+    expect(readFinalDeclaration(".tab-mention-action.keyboard-active", "background")).toBe("#3b3d3d");
+    expect(readFinalDeclaration(".tab-mention-row.keyboard-active", "transform")).toBe("none");
+  });
+
   test("keeps assistant message actions below the response instead of beside it", () => {
     expect(readFinalDeclaration(".message-row.assistant", "flex-direction")).toBe("column");
     expect(readFinalDeclaration(".message-row.assistant", "align-items")).toBe("flex-start");

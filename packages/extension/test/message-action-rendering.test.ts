@@ -64,4 +64,21 @@ describe("message action rendering", () => {
     expect(sidepanelSource).not.toContain("data-image-download=");
     expect(sidepanelSource).not.toContain("message-image-actions");
   });
+
+  test("renders selected plugin mentions on user messages and composer context chips", () => {
+    expect(sidepanelSource).toContain("renderConversationMessageStructuredInputs");
+    expect(sidepanelSource).toContain("createConversationMessageStructuredInputs");
+    expect(sidepanelSource).toContain("renderStructuredInputIcon");
+    expect(sidepanelSource).toContain("submittedMessageStructuredInputs.length ? { structuredInputs: submittedMessageStructuredInputs }");
+    expect(sidepanelSource).toContain("data-remove-structured-input-id=");
+    expect(sidepanelSource).toContain("summary-chip-remove");
+  });
+
+  test("renders selected plugin mentions inside the user message card metadata row", () => {
+    expect(sidepanelSource).toContain("function renderMessageMetaPills");
+    expect(sidepanelSource).toContain(
+      'const userMetaHtml = message.role === "user" ? renderMessageMetaPills(profileHtml, structuredInputHtml) : "";',
+    );
+    expect(sidepanelSource).not.toContain("${structuredInputHtml}\n          ${cardHtml}");
+  });
 });

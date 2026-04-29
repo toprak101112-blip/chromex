@@ -3,6 +3,7 @@ import { describe, expect, test } from "vitest";
 import {
   clearConversationHistoryState,
   deleteConversationHistoryEntry,
+  resolveVisibleCurrentConversation,
 } from "../src/background/conversation-history.js";
 import {
   prepareConversationsForStorage,
@@ -66,6 +67,28 @@ describe("conversation history helpers", () => {
       conversations: [],
       currentConversationId: null,
     });
+  });
+
+  test("uses the active unsaved draft instead of falling back to an older stored chat", () => {
+    const stored = makeConversation("old-chat");
+    const draft = makeConversation("new-chat");
+
+    expect(
+      resolveVisibleCurrentConversation({
+        conversations: [stored],
+        currentConversationId: "new-chat",
+        draftConversation: draft,
+      })?.id,
+    ).toBe("new-chat");
+  });
+
+  test("does not return a stored chat that is no longer active", () => {
+    expect(
+      resolveVisibleCurrentConversation({
+        conversations: [makeConversation("old-chat")],
+        currentConversationId: "new-chat",
+      }),
+    ).toBeNull();
   });
 
   test("strips bridge-backed generated image data before writing history", () => {

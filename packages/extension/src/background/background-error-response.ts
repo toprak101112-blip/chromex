@@ -42,6 +42,7 @@ function isExpectedRecoverableBackgroundError(error: unknown): boolean {
   const message = getErrorMessage(error).toLowerCase();
   return (
     message.includes("generated image asset is no longer available") ||
+    message.includes("extensions gallery cannot be scripted") ||
     /\bthread not found\b|no turns for conversation|unknown conversation/iu.test(message)
   );
 }

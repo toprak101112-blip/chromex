@@ -5,6 +5,7 @@ import {
   type BrowserActionPermissionMode,
   type CodexActiveTurn,
   type CodexAppOption,
+  type CodexMcpServerOption,
   type CodexModelOption,
   type CodexModelReroute,
   type CodexPluginOption,
@@ -46,6 +47,12 @@ import { createConversationMessageAttachments } from "./message-attachments.js";
 import { isSafeMessageImageUrl, renderMessageContentHtml } from "./message-content.js";
 import { createExternalImagePreviewUrl } from "./external-image-preview.js";
 import {
+  clearEmptyAssistantResponseNotice,
+  createEmptyAssistantResponseNotice,
+  getStructuredInputNamesForEmptyResponseNotice,
+  shouldShowEmptyAssistantResponseNotice,
+} from "./empty-assistant-response.js";
+import {
   ASK_USER_QUESTION_TAG,
   hasProfileAskUserQuestionStart,
   parseProfileAskUserQuestion,
@@ -54,12 +61,23 @@ import {
   type ProfileAskUserQuestion,
 } from "./profile-question.js";
 import { renderPendingProfileQuestionCard } from "./profile-question-card.js";
-import { extractMentionQuery, listMentionOptions } from "./mentions.js";
+import {
+  clampMentionOptionIndex,
+  extractMentionQuery,
+  getNextMentionOptionIndex,
+  isMentionOptionArrowKey,
+  isStructuredMentionOption,
+  listMentionOptions,
+  type MentionOption,
+  type StructuredMentionOption,
+} from "./mentions.js";
 import { createRenderBatcher } from "./render-batcher.js";
 import {
   normalizePanelConversation,
   normalizeSidepanelCollections,
   serializeConversationMessagesForStorage,
+  shouldApplyConversationSaveResultToActiveChat,
+  shouldHydrateInitConversation,
   shouldPersistConversationMessagesForStorage,
 } from "./sidepanel-state.js";
 import {
@@ -69,6 +87,7 @@ import {
   type PromptActivityState,
 } from "./prompt-activity.js";
 import {
+  getEffectivePromptActivityForActiveWork,
   promotePromptActivityForAssistantProgress,
   promotePromptActivityForTurnActivity,
   shouldClearPromptActivityOnMessageCompleted,
@@ -214,6 +233,7 @@ import type {
   ConversationMessageAttachment,
   ConversationMessageImage,
   ConversationMessageProfile,
+  ConversationMessageStructuredInput,
   ConversationMessageTraceItem,
   ConversationMessage,
   ConversationSummary,
@@ -245,6 +265,11 @@ import {
   toggleEnabledCodexSkillId,
 } from "../codex-skill-settings.js";
 import {
+  findCompanionAppForPlugin,
+  getPluginConnectionState,
+  isPluginMentionRouteable,
+} from "../plugin-connection-availability.js";
+import {
   deleteCustomSiteSuggestion,
   inferCustomSiteSuggestionCards,
   listCustomSiteSuggestionsForTab,
@@ -256,6 +281,13 @@ import {
   shouldStickToBottomAfterRender,
 } from "./chat-scroll-controls.js";
 import {
+  calculateNextChatMessageWindowSize,
+  CHAT_MESSAGE_WINDOW_INCREMENT,
+  DEFAULT_CHAT_MESSAGE_WINDOW_SIZE,
+  getChatMessageWindow,
+  shouldExpandChatMessageWindowOnScroll,
+} from "./chat-message-window.js";
+import {
   resolveAuthOnboardingReadiness,
   shouldShowAuthOnboarding,
   shouldShowUsageNoticeOnboarding,
@@ -263,7 +295,7 @@ import {
 import { createStreamingDeltaBuffer } from "./streaming-delta-buffer.js";
 import { renderUiIcon, type UiIconName } from "./ui-icons.js";
 
-type MainView = "chat" | "context" | "workspace";
+type MainView = "chat" | "context" | "skills" | "plugins" | "workspace";
 const MAX_TRACE_ITEMS = 12;
 
 type ProfileEditorState = {
@@ -304,6 +336,16 @@ type NativeConfirmationDialogState = {
   confirmLabel: string;
   cancelLabel: string;
   tone: "default" | "danger";
+};
+
+type PluginConnectionDialogState = {
+  kind: "app" | "plugin";
+  id: string;
+  name: string;
+  description: string;
+  installUrl?: string;
+  iconUrl?: string;
+  accountEmail?: string;
 };
 
 type ImageAnnotationEditorState =
@@ -557,6 +599,7 @@ const DEFAULT_PROFILE_VISUAL_COLOR = "#8b5cf6";
 const DEFAULT_PROFILE_VISUAL_ICON = DEFAULT_PROFILE_ICON_ID;
 const MAX_PROFILE_IMAGE_BYTES = 180_000;
 const EXTERNAL_IMAGE_PREVIEW_OBJECT_URL_REVOKE_MS = 60_000;
+const EMPTY_ASSISTANT_RESPONSE_NOTICE_DELAY_MS = 900;
 const autoSavedImageAssetRefs = new Set<string>();
 const pendingImageWorkflowMessageIdsByRequest = new Map<string, string>();
 const completedImageWorkflowMessageIdsByRequest = new Map<string, string>();
@@ -578,6 +621,7 @@ const assistantResponseGroupKeysByTurnKey = new Map<string, string>();
 const assistantResponseItemOrderByMessageId = new Map<string, string[]>();
 const assistantResponseItemTextsByMessageId = new Map<string, Map<string, string>>();
 const unresolvedConversationBridgeEventsByThreadId = new Map<string, SidepanelBridgeEvent[]>();
+const pendingEmptyAssistantResponseNoticeTimers = new Map<string, ReturnType<typeof setTimeout>>();
 const profileQuestionStreamBuffers = new Map<string, string>();
 let profileQuestionCardRenderRequested = false;
 let contextCompactionNoticeCounter = 0;
@@ -646,6 +690,7 @@ const state = {
   profileEditor: null as null | ProfileEditorState,
   nativeTextDialog: null as null | NativeTextDialogState,
   nativeConfirmationDialog: null as null | NativeConfirmationDialogState,
+  pluginConnectionDialog: null as null | PluginConnectionDialogState,
   pendingProfileQuestion: null as PendingProfileQuestionState | null,
   selectedTabIds: [] as number[],
   openTabOptions: [] as OpenTabContext[],
@@ -654,8 +699,10 @@ const state = {
   historyQuery: "",
   historyItems: [] as Array<{ title: string; url: string }>,
   messages: [] as ConversationMessage[],
+  chatMessageWindowSize: DEFAULT_CHAT_MESSAGE_WINDOW_SIZE,
   editingMessageId: null as string | null,
   mentionQuery: null as string | null,
+  mentionActiveIndex: 0,
   slashQuery: null as string | null,
   slashActiveIndex: 0,
   voiceEnabled: false,
@@ -693,6 +740,7 @@ const state = {
   appServerSkills: [] as CodexSkillOption[],
   connectedApps: [] as CodexAppOption[],
   appServerPlugins: [] as CodexPluginOption[],
+  mcpServers: [] as CodexMcpServerOption[],
   recentChats: [] as ConversationSummary[],
   serverThreads: [] as CodexThreadSummary[],
   currentConversationId: "",
@@ -776,12 +824,17 @@ const voiceTranscriptMirror = createVoiceTranscriptMirrorState();
 let nativeConfirmationResolver: ((approved: boolean) => void) | null = null;
 let initializePromise: Promise<void> | null = null;
 let initializeQueued = false;
+let initializeQueuedForceCatalog = false;
+let pendingPluginConnectionCatalogRefresh = false;
 let composerCompositionInProgress = false;
 let composerCompositionStartDraft = "";
 let renderDeferredDuringComposerComposition = false;
 let smokeDryRunSubmissions: string[] = [];
 let promptSubmissionBootstrapInFlight = false;
 let chatScrollUserOverrideUntil = 0;
+let pendingChatScrollToBottom = false;
+let pendingChatScrollAnchor: { previousScrollTop: number; previousScrollHeight: number } | null = null;
+let lastRenderedActiveView: MainView | null = null;
 const completedTurnIds = new Set<string>();
 const cancelledPromptRequestIds = new Set<string>();
 const REALTIME_AUDIO_CHUNK_MS = 240;
@@ -792,6 +845,16 @@ const REALTIME_VOICE_CONTEXT_SNAPSHOT_TTL_MS = 5000;
 const COMPOSER_VOICE_WAVEFORM_BAR_COUNT = 46;
 const COMPOSER_VOICE_WAVEFORM_REFRESH_MS = 90;
 const COMPOSER_VOICE_STOP_FINALIZATION_TIMEOUT_MS = 1500;
+type ComposerTextareaAutosizeMetrics = {
+  lineHeight: number;
+  paddingTop: number;
+  paddingBottom: number;
+  minHeight: number;
+};
+const composerTextareaAutosizeMetricsByElement = new WeakMap<
+  HTMLTextAreaElement,
+  ComposerTextareaAutosizeMetrics
+>();
 const renderBatcher = createRenderBatcher(
   () => renderNow(),
   (callback) =>
@@ -844,6 +907,16 @@ window.addEventListener("pagehide", () => {
   void stopRealtimeVoiceSession({ notifyBridge: true });
 });
 
+window.addEventListener("focus", () => {
+  void refreshPendingPluginConnectionCatalog();
+});
+
+document.addEventListener("visibilitychange", () => {
+  if (document.visibilityState === "visible") {
+    void refreshPendingPluginConnectionCatalog();
+  }
+});
+
 window.addEventListener("unhandledrejection", (event) => {
   state.initError = toUserFacingRuntimeError(event.reason);
   render();
@@ -893,6 +966,7 @@ chrome.runtime.onMessage.addListener((message) => {
   }
 
   if (event.type === "message.delta") {
+    cancelEmptyAssistantResponseNotice(event.threadId ?? "", event.turnId ?? "", eventConversationId);
     if (!isCurrentConversationEvent) {
       if (eventConversationId) {
         const itemId = event.itemId ?? "assistant";
@@ -921,8 +995,10 @@ chrome.runtime.onMessage.addListener((message) => {
   }
   if (event.type === "message.completed") {
     const itemId = event.itemId ?? "assistant";
+    cancelEmptyAssistantResponseNotice(event.threadId ?? "", event.turnId ?? "", eventConversationId);
     if (!isCurrentConversationEvent && eventConversationId) {
       upsertAssistantMessageForConversation(eventConversationId, itemId, event.text ?? "", false);
+      clearEmptyAssistantResponseNoticeForTurn(event.threadId ?? "", event.turnId ?? "", eventConversationId);
       completeTurnTraceForConversation(eventConversationId, event.threadId ?? "", event.turnId ?? "");
       clearConversationActivity(eventConversationId);
       renderConversationListIfVisible();
@@ -943,6 +1019,7 @@ chrome.runtime.onMessage.addListener((message) => {
     if ((event.text ?? "").length > 0 || !state.messages.some((message) => message.id === messageId)) {
       upsertAssistantMessage(itemId, event.text ?? "", false, event);
     }
+    clearEmptyAssistantResponseNoticeForTurn(event.threadId ?? "", event.turnId ?? "", eventConversationId);
     if (!state.promptActivity && !state.activeTurn?.turnId) {
       state.streamingAssistantMessageIds.delete(messageId);
     }
@@ -953,6 +1030,8 @@ chrome.runtime.onMessage.addListener((message) => {
     shouldRender = state.activeView === "chat";
   }
   if (event.type === "message.image" && event.previewRef) {
+    cancelEmptyAssistantResponseNotice(event.threadId ?? "", event.turnId ?? "", eventConversationId);
+    clearEmptyAssistantResponseNoticeForTurn(event.threadId ?? "", event.turnId ?? "", eventConversationId);
     if (!isCurrentConversationEvent && eventConversationId) {
       renderConversationListIfVisible();
       void hydrateImageForDetachedConversation({
@@ -1078,6 +1157,12 @@ chrome.runtime.onMessage.addListener((message) => {
   if (event.type === "turn.completed" && event.threadId) {
     if (!isCurrentConversationEvent && eventConversationId) {
       completeTurnTraceForConversation(eventConversationId, event.threadId, event.turnId ?? "");
+      scheduleEmptyAssistantResponseNotice({
+        conversationId: eventConversationId,
+        threadId: event.threadId,
+        turnId: event.turnId ?? "",
+        activeUserMessageId: activePromptUserMessageIdsByConversationId.get(eventConversationId) ?? null,
+      });
       activeTurnsByConversationId.delete(eventConversationId);
       promptActivitiesByConversationId.delete(eventConversationId);
       activePromptUserMessageIdsByConversationId.delete(eventConversationId);
@@ -1089,6 +1174,12 @@ chrome.runtime.onMessage.addListener((message) => {
     }
     flushStreamingAssistantDeltas();
     completeTurnTrace(event.threadId, event.turnId ?? "");
+    scheduleEmptyAssistantResponseNotice({
+      conversationId: state.currentConversationId || null,
+      threadId: event.threadId,
+      turnId: event.turnId ?? "",
+      activeUserMessageId: state.activePromptUserMessageId || null,
+    });
     if (
       shouldClearPromptActivityOnTurnCompleted({
         current: state.promptActivity,
@@ -1518,14 +1609,16 @@ async function handleOnlineImagePromptExtraction(value: unknown): Promise<void> 
   await sendPrompt(prompt);
 }
 
-async function initialize(): Promise<void> {
+async function initialize(options: { forceCatalog?: boolean } = {}): Promise<void> {
   installSystemThemeListener();
   state.uiLocale = detectUiLocale(getBrowserUiLanguage());
   syncDocumentLanguage();
+  const currentConversationIdBeforeInit = state.currentConversationId;
   try {
     const payload = (await sendRuntimeMessage({
       type: "ui.init",
       ...(targetWindowId ? { windowId: targetWindowId } : {}),
+      ...(options.forceCatalog ? { forceCatalog: true } : {}),
     })) as UiInitPayload & { error?: string };
     if (payload.error) {
       throw new Error(payload.error);
@@ -1564,6 +1657,7 @@ async function initialize(): Promise<void> {
     state.appServerSkills = collections.appServerSkills;
     state.connectedApps = collections.connectedApps;
     state.appServerPlugins = collections.appServerPlugins;
+    state.mcpServers = collections.mcpServers;
     state.recentChats = collections.recentChats;
     state.serverThreads = collections.serverThreads;
     state.rateLimits = payload.rateLimits;
@@ -1576,7 +1670,15 @@ async function initialize(): Promise<void> {
     if (state.selectedProfileId !== selectedProfileBeforeFallback) {
       void sendRuntimeMessage({ type: "profile.select", profileId: state.selectedProfileId });
     }
-    hydrateConversation(payload.currentConversation);
+    if (
+      shouldHydrateInitConversation({
+        currentConversationIdBeforeInit,
+        currentConversationIdNow: state.currentConversationId,
+        payloadConversationId: payload.currentConversation?.id ?? "",
+      })
+    ) {
+      hydrateConversation(payload.currentConversation);
+    }
     syncSelectedReasoningEffort();
     sanitizeUnavailableCurrentPageState();
     renderSync();
@@ -1593,7 +1695,10 @@ async function initialize(): Promise<void> {
   }
 }
 
-function scheduleInitialize(): Promise<void> {
+function scheduleInitialize(options: { forceCatalog?: boolean } = {}): Promise<void> {
+  if (options.forceCatalog) {
+    initializeQueuedForceCatalog = true;
+  }
   if (initializePromise) {
     initializeQueued = true;
     return initializePromise;
@@ -1602,7 +1707,9 @@ function scheduleInitialize(): Promise<void> {
   initializePromise = (async () => {
     do {
       initializeQueued = false;
-      await initialize();
+      const forceCatalog = initializeQueuedForceCatalog;
+      initializeQueuedForceCatalog = false;
+      await initialize({ forceCatalog });
     } while (initializeQueued);
   })().finally(() => {
     initializePromise = null;
@@ -1632,6 +1739,9 @@ function hydrateConversation(conversation: SavedConversation | null): void {
     state.currentReadStrategy = "auto";
     state.fileAttachments = [];
     state.structuredInputs = [];
+    state.chatMessageWindowSize = DEFAULT_CHAT_MESSAGE_WINDOW_SIZE;
+    pendingChatScrollToBottom = false;
+    pendingChatScrollAnchor = null;
     return;
   }
 
@@ -1639,6 +1749,10 @@ function hydrateConversation(conversation: SavedConversation | null): void {
   state.threadId = normalized.threadId ?? "";
   state.activePromptUserMessageId = activePromptUserMessageIdsByConversationId.get(normalized.id) ?? "";
   state.messages = cloneConversationMessages(conversationMessagesById.get(normalized.id) ?? normalized.messages);
+  state.chatMessageWindowSize = DEFAULT_CHAT_MESSAGE_WINDOW_SIZE;
+  pendingChatScrollToBottom = true;
+  pendingChatScrollAnchor = null;
+  chatScrollUserOverrideUntil = 0;
   state.attachments = new Set();
   state.selectedTabIds = [];
   state.historyQuery = "";
@@ -1735,11 +1849,14 @@ function flushBufferedConversationBridgeEvents(conversationId: string, threadId:
 function applyBufferedConversationBridgeEvent(conversationId: string, event: SidepanelBridgeEvent): void {
   switch (event.type) {
     case "message.delta": {
+      cancelEmptyAssistantResponseNotice(event.threadId ?? "", event.turnId ?? "", conversationId);
       upsertAssistantMessageForConversation(conversationId, event.itemId ?? "assistant", event.delta ?? "", true);
       break;
     }
     case "message.completed": {
+      cancelEmptyAssistantResponseNotice(event.threadId ?? "", event.turnId ?? "", conversationId);
       upsertAssistantMessageForConversation(conversationId, event.itemId ?? "assistant", event.text ?? "", false);
+      clearEmptyAssistantResponseNoticeForTurn(event.threadId ?? "", event.turnId ?? "", conversationId);
       completeTurnTraceForConversation(conversationId, event.threadId ?? "", event.turnId ?? "");
       clearConversationActivity(conversationId);
       void persistDetachedConversation(conversationId);
@@ -1753,6 +1870,12 @@ function applyBufferedConversationBridgeEvent(conversationId: string, event: Sid
     }
     case "turn.completed": {
       completeTurnTraceForConversation(conversationId, event.threadId ?? "", event.turnId ?? "");
+      scheduleEmptyAssistantResponseNotice({
+        conversationId,
+        threadId: event.threadId ?? "",
+        turnId: event.turnId ?? "",
+        activeUserMessageId: activePromptUserMessageIdsByConversationId.get(conversationId) ?? null,
+      });
       clearConversationActivity(conversationId);
       void persistDetachedConversation(conversationId);
       break;
@@ -2146,18 +2269,10 @@ function renderNow(): void {
 
   ensureComposerProfileSelection();
   const strings = getUiStrings(state.uiLocale);
-  const mentionOptions =
-    state.mentionQuery !== null
-      ? listMentionOptions(state.mentionQuery, state.uiLocale, {
-          apps: state.connectedApps,
-          plugins: state.appServerPlugins,
-          skills: state.appServerSkills,
-        }).slice(0, 12)
-      : [];
-  const tabMentionOptions =
-    state.mentionQuery !== null && state.openTabOptionsState === "ready"
-      ? listTabMentionOptions(state.openTabOptions, state.mentionQuery, 30)
-      : [];
+  const mentionOptions = getMentionOptionsForState();
+  const tabMentionOptions = getTabMentionOptionsForState();
+  const mentionKeyboardOptions = getMentionKeyboardOptionsForState(tabMentionOptions, mentionOptions);
+  const mentionActiveIndex = clampMentionOptionIndex(state.mentionActiveIndex, mentionKeyboardOptions.length);
   const slashOptions = getSlashOptionsForState();
   const composerSuggestionsOpen =
     state.slashQuery !== null || state.mentionQuery !== null || state.attachmentMenuOpen || state.composerModelMenuOpen;
@@ -2187,6 +2302,13 @@ function renderNow(): void {
     !smokeTestMode && state.activeView === "chat" && (showAuthOnboarding || showUsageNoticeOnboarding);
   const scrollState = captureScrollPositions();
   const composerState = captureComposerRenderState();
+  const returningToChatView =
+    state.activeView === "chat" && lastRenderedActiveView !== null && lastRenderedActiveView !== "chat";
+  if (returningToChatView) {
+    pendingChatScrollToBottom = true;
+    pendingChatScrollAnchor = null;
+    chatScrollUserOverrideUntil = 0;
+  }
 
   syncDocumentLanguage();
   root.innerHTML = `
@@ -2231,7 +2353,11 @@ function renderNow(): void {
             ? renderChatView(strings)
             : state.activeView === "context"
               ? renderContextView(strings)
-              : renderWorkspaceView(strings)
+              : state.activeView === "skills"
+                ? renderSkillsView(strings)
+                : state.activeView === "plugins"
+                  ? renderPluginMcpView(strings)
+                  : renderWorkspaceView(strings)
         }
       </main>
 
@@ -2269,7 +2395,7 @@ function renderNow(): void {
                 state.slashQuery !== null
                   ? renderSlashCommandPopover(strings, slashOptions, clampSlashCommandIndex(state.slashActiveIndex, slashOptions.length))
                   : state.mentionQuery !== null
-                    ? renderMentionTabPicker(strings, tabMentionOptions, mentionOptions)
+                    ? renderMentionTabPicker(strings, tabMentionOptions, mentionOptions, mentionActiveIndex)
                     : ""
               }
                 <div class="composer-bar composer-control-bar">
@@ -2313,6 +2439,7 @@ function renderNow(): void {
   restoreScrollPositions(scrollState);
   updateScrollToBottomButtonVisibility();
   restoreComposerRenderState(composerState);
+  lastRenderedActiveView = state.activeView;
 }
 
 function resolveComposerPrimaryActionButton(strings: ReturnType<typeof getUiStrings>): {
@@ -2322,11 +2449,11 @@ function resolveComposerPrimaryActionButton(strings: ReturnType<typeof getUiStri
   disabled: boolean;
   content: string;
 } {
-  const currentTurnActive = isCurrentTurnActive();
-  const canStopCurrentWork = currentTurnActive || Boolean(state.promptActivity);
+  const currentWorkActive = isCurrentPromptWorkActive();
+  const canStopCurrentWork = currentWorkActive;
   const canSendMessage = canSendComposerMessage({
     draft: state.composerDraft,
-    turnActive: currentTurnActive,
+    turnActive: currentWorkActive,
     promptActivityActive: Boolean(state.promptActivity),
     streamingAssistantActive: state.streamingAssistantMessageIds.size > 0,
     submissionStartingActive: promptSubmissionBootstrapInFlight,
@@ -2561,6 +2688,11 @@ function installGlobalFloatingSurfaceDismissal(): void {
   );
 
   document.addEventListener("keydown", (event) => {
+    if (event.key === "Escape" && state.pluginConnectionDialog) {
+      event.preventDefault();
+      closePluginConnectionDialog();
+      return;
+    }
     if (event.key === "Escape" && state.nativeTextDialog) {
       event.preventDefault();
       closeNativeTextDialog();
@@ -2626,6 +2758,7 @@ function isInsideFloatingSurfaceInteraction(target: Element): boolean {
 function closeFloatingSurfaces(): boolean {
   const wasOpen = hasOpenFloatingSurface();
   state.mentionQuery = null;
+  state.mentionActiveIndex = 0;
   state.slashQuery = null;
   state.slashActiveIndex = 0;
   state.attachmentMenuOpen = false;
@@ -2663,7 +2796,7 @@ function renderAppMenu(isPopup: boolean, disabled = false): string {
             ? recentChats
                 .map(
                   (chat) => `
-                    <div class="app-menu-chat-row">
+                    <div class="app-menu-chat-row ${chat.selected ? "selected" : ""}">
                       <button
                         class="app-menu-row recent-chat ${chat.selected ? "selected" : ""}"
                         data-chat-id="${escapeAttribute(chat.id)}"
@@ -2712,9 +2845,14 @@ function renderAppMenu(isPopup: boolean, disabled = false): string {
         <span class="app-menu-icon list" aria-hidden="true">${renderAppMenuListIcon()}</span>
         <span class="app-menu-label">${escapeHtml(labels.compactConversation)}</span>
       </button>
-      <button class="app-menu-row" data-menu-view="context" role="menuitem" ${disabledAttribute}>
-        <span class="app-menu-icon" aria-hidden="true">${renderAppMenuContextIcon()}</span>
-        <span class="app-menu-label">${escapeHtml(labels.context)}</span>
+      <button class="app-menu-row" data-menu-view="skills" role="menuitem" ${disabledAttribute}>
+        <span class="app-menu-icon" aria-hidden="true">${renderAppMenuSkillsIcon()}</span>
+        <span class="app-menu-label">${escapeHtml(labels.skills)}</span>
+        <span class="app-menu-chevron" aria-hidden="true">${renderUiIcon("chevron-right")}</span>
+      </button>
+      <button class="app-menu-row" data-menu-view="plugins" role="menuitem" ${disabledAttribute}>
+        <span class="app-menu-icon" aria-hidden="true">${renderAppMenuPluginMcpIcon()}</span>
+        <span class="app-menu-label">${escapeHtml(labels.pluginMcp)}</span>
         <span class="app-menu-chevron" aria-hidden="true">${renderUiIcon("chevron-right")}</span>
       </button>
       <button class="app-menu-row" data-menu-view="workspace" role="menuitem" ${disabledAttribute}>
@@ -2946,6 +3084,14 @@ function renderAppMenuContextIcon(): string {
   return renderUiIcon("panel");
 }
 
+function renderAppMenuSkillsIcon(): string {
+  return renderUiIcon("zap");
+}
+
+function renderAppMenuPluginMcpIcon(): string {
+  return renderUiIcon("globe");
+}
+
 function renderAppMenuSettingsIcon(): string {
   return renderUiIcon("settings");
 }
@@ -3149,7 +3295,89 @@ function renderPendingPermissionPrompt(strings: ReturnType<typeof getUiStrings>)
 }
 
 function renderNativeDialogs(strings: ReturnType<typeof getUiStrings>): string {
-  return [renderNativeTextDialog(strings), renderNativeConfirmationDialog()].filter(Boolean).join("");
+  return [renderPluginConnectionDialog(strings), renderNativeTextDialog(strings), renderNativeConfirmationDialog()]
+    .filter(Boolean)
+    .join("");
+}
+
+function renderPluginConnectionDialog(strings: ReturnType<typeof getUiStrings>): string {
+  const dialog = state.pluginConnectionDialog;
+  if (!dialog) {
+    return "";
+  }
+
+  const icon = renderPluginConnectionDialogIcon(dialog);
+  const actionLabel = dialog.installUrl ? strings.actions.connect : strings.actions.reload;
+  return `
+    <div class="plugin-connect-backdrop" role="presentation" data-plugin-connect-backdrop>
+      <section class="plugin-connect-modal" role="dialog" aria-modal="true" aria-labelledby="plugin-connect-title">
+        <button
+          class="icon-button plugin-connect-close"
+          type="button"
+          data-plugin-connect-close
+          aria-label="${escapeAttribute(strings.actions.closeProfileEditor)}"
+        >
+          ${renderUiIcon("x")}
+        </button>
+        <div class="plugin-connect-hero" aria-hidden="true">
+          <span class="plugin-connect-brand">${renderUiIcon("code")}</span>
+          <span class="plugin-connect-dots">•••</span>
+          ${icon}
+        </div>
+        <header class="plugin-connect-title">
+          <p>${escapeHtml(dialog.kind === "app" ? strings.labels.apps : strings.labels.plugins)}</p>
+          <h2 id="plugin-connect-title">${escapeHtml(dialog.name)}</h2>
+        </header>
+        <div class="plugin-connect-policy">
+          ${renderPluginConnectionNotice(strings.usageNotice.contextTitle, strings.usageNotice.contextBody)}
+          ${renderPluginConnectionNotice(strings.usageNotice.sensitiveTitle, strings.usageNotice.sensitiveBody)}
+          ${renderPluginConnectionNotice(strings.usageNotice.permissionsTitle, strings.usageNotice.permissionsBody)}
+          ${renderPluginConnectionNotice(strings.usageNotice.safetyTitle, strings.usageNotice.safetyBody)}
+          ${
+            dialog.description
+              ? renderPluginConnectionNotice(strings.labels.pluginMcp, dialog.description)
+              : ""
+          }
+          ${renderPluginConnectionAccountNotice(dialog, strings)}
+        </div>
+        <footer class="plugin-connect-actions">
+          <button class="plugin-connect-primary" type="button" data-plugin-connect-confirm>
+            ${escapeHtml(actionLabel)}
+          </button>
+        </footer>
+      </section>
+    </div>
+  `;
+}
+
+function renderPluginConnectionNotice(title: string, body: string): string {
+  return `
+    <section class="plugin-connect-notice">
+      <strong>${escapeHtml(title)}</strong>
+      <p>${escapeHtml(body)}</p>
+    </section>
+  `;
+}
+
+function renderPluginConnectionAccountNotice(
+  dialog: PluginConnectionDialogState,
+  strings: ReturnType<typeof getUiStrings>,
+): string {
+  if (!dialog.installUrl || !dialog.accountEmail) {
+    return "";
+  }
+  return renderPluginConnectionNotice(
+    strings.usageNotice.appConnectionAccountTitle,
+    strings.usageNotice.appConnectionAccountBody(dialog.accountEmail),
+  );
+}
+
+function renderPluginConnectionDialogIcon(dialog: PluginConnectionDialogState): string {
+  if (dialog.iconUrl && isSafeMessageImageUrl(dialog.iconUrl)) {
+    return `<span class="plugin-connect-app-icon image"><img src="${escapeAttribute(dialog.iconUrl)}" alt="" loading="lazy" /></span>`;
+  }
+  const icon = dialog.kind === "app" ? "globe" : "code";
+  return `<span class="plugin-connect-app-icon">${renderUiIcon(icon)}</span>`;
 }
 
 function renderNativeTextDialog(strings: ReturnType<typeof getUiStrings>): string {
@@ -3418,53 +3646,79 @@ function renderMentionTabPicker(
   strings: ReturnType<typeof getUiStrings>,
   tabs: OpenTabContext[],
   mentionOptions: ReturnType<typeof listMentionOptions>,
+  activeIndex: number,
 ): string {
   const header = renderTabMentionHeader(strings);
-  const openTabsOption = mentionOptions.find((option) => option.contextId === "open-tabs");
+  const openTabsOption = mentionOptions.find(
+    (option): option is Extract<MentionOption, { kind: "context" }> =>
+      option.kind === "context" && option.contextId === "open-tabs",
+  );
+  const structuredMentionOptions = mentionOptions.filter(isStructuredMentionOption);
+  const structuredSearchHint = structuredMentionOptions.length ? "" : renderMentionStructuredSearchHint(strings);
 
   if (state.openTabOptionsState === "loading") {
-    return `<div class="suggestions tab-mention-popover">${header}<div class="tab-mention-status">${escapeHtml(strings.status.tabPickerLoading)}</div></div>`;
+    return `<div class="suggestions tab-mention-popover">${header}<div class="tab-mention-status">${escapeHtml(strings.status.tabPickerLoading)}</div>${structuredSearchHint}${renderMentionStructuredSections(strings, structuredMentionOptions, activeIndex, 0)}</div>`;
   }
 
   if (state.openTabOptionsState === "permission" || state.openTabOptionsState === "idle") {
+    const actionHtml = openTabsOption
+      ? `<button class="tab-mention-action${getMentionKeyboardActiveClass(0, activeIndex)}" data-tab-picker-action="grant" aria-selected="${0 === activeIndex ? "true" : "false"}">
+          <strong>${escapeHtml(`@${openTabsOption.contextId}`)}</strong>
+          <span>${escapeHtml(strings.status.tabPickerPermission)}</span>
+        </button>`
+      : "";
+    const pluginStartIndex = openTabsOption ? 1 : 0;
+    const emptyStatus =
+      !actionHtml && !structuredMentionOptions.length ? `<div class="tab-mention-status">${escapeHtml(strings.status.tabPickerEmpty)}</div>` : "";
     return `
       <div class="suggestions tab-mention-popover">
         ${header}
-        <button class="tab-mention-action" data-tab-picker-action="grant">
-          <strong>${escapeHtml(openTabsOption ? `@${openTabsOption.contextId}` : strings.labels.openTabs)}</strong>
-          <span>${escapeHtml(strings.status.tabPickerPermission)}</span>
-        </button>
+        ${actionHtml}
+        ${emptyStatus}
+        ${structuredSearchHint}
+        ${renderMentionStructuredSections(strings, structuredMentionOptions, activeIndex, pluginStartIndex)}
       </div>
     `;
   }
 
   if (state.openTabOptionsState === "error") {
+    const actionHtml = openTabsOption
+      ? `<button class="tab-mention-action${getMentionKeyboardActiveClass(0, activeIndex)}" data-tab-picker-action="grant" aria-selected="${0 === activeIndex ? "true" : "false"}">
+          <strong>${escapeHtml(strings.actions.refresh)}</strong>
+          <span>${escapeHtml(state.openTabOptionsError || strings.status.tabPickerEmpty)}</span>
+        </button>`
+      : "";
+    const pluginStartIndex = openTabsOption ? 1 : 0;
+    const emptyStatus =
+      !actionHtml && !structuredMentionOptions.length ? `<div class="tab-mention-status">${escapeHtml(strings.status.tabPickerEmpty)}</div>` : "";
     return `
       <div class="suggestions tab-mention-popover">
         ${header}
-        <button class="tab-mention-action" data-tab-picker-action="grant">
-          <strong>${escapeHtml(strings.actions.refresh)}</strong>
-          <span>${escapeHtml(state.openTabOptionsError || strings.status.tabPickerEmpty)}</span>
-        </button>
+        ${actionHtml}
+        ${emptyStatus}
+        ${structuredSearchHint}
+        ${renderMentionStructuredSections(strings, structuredMentionOptions, activeIndex, pluginStartIndex)}
       </div>
     `;
   }
 
   if (tabs.length === 0) {
-    return `<div class="suggestions tab-mention-popover">${header}<div class="tab-mention-status">${escapeHtml(strings.status.tabPickerEmpty)}</div></div>`;
+    const emptyStatus = structuredMentionOptions.length ? "" : `<div class="tab-mention-status">${escapeHtml(strings.status.tabPickerEmpty)}</div>`;
+    return `<div class="suggestions tab-mention-popover">${header}${emptyStatus}${structuredSearchHint}${renderMentionStructuredSections(strings, structuredMentionOptions, activeIndex, 0)}</div>`;
   }
 
   return `
     <div class="suggestions tab-mention-popover">
       ${header}
       ${tabs
-        .map((tab) => {
+        .map((tab, rowIndex) => {
           const selected = state.selectedTabIds.includes(tab.tabId);
           return `
             <button
-              class="tab-mention-row ${selected ? "selected" : ""}"
+              class="tab-mention-row ${selected ? "selected" : ""}${getMentionKeyboardActiveClass(rowIndex, activeIndex)}"
               data-tab-mention-id="${tab.tabId}"
               aria-pressed="${selected ? "true" : "false"}"
+              aria-selected="${rowIndex === activeIndex ? "true" : "false"}"
             >
               ${renderTabMentionIcon(tab)}
               <span class="tab-mention-copy">
@@ -3476,8 +3730,108 @@ function renderMentionTabPicker(
           `;
         })
         .join("")}
+      ${structuredSearchHint}
+      ${renderMentionStructuredSections(strings, structuredMentionOptions, activeIndex, tabs.length)}
     </div>
   `;
+}
+
+function renderMentionStructuredSearchHint(strings: ReturnType<typeof getUiStrings>): string {
+  if ((state.mentionQuery ?? "").trim()) {
+    return "";
+  }
+  return `<div class="tab-mention-structured-hint">${escapeHtml(`${strings.labels.apps} / ${strings.labels.plugins} / ${strings.roles.skill} · @${strings.actions.search}`)}</div>`;
+}
+
+function renderMentionStructuredSections(
+  strings: ReturnType<typeof getUiStrings>,
+  options: StructuredMentionOption[],
+  activeIndex: number,
+  startIndex: number,
+): string {
+  if (!options.length) {
+    return "";
+  }
+  let rowIndex = startIndex;
+  return groupStructuredMentionOptions(options)
+    .map((group) => {
+      const label = getStructuredMentionKindLabel(group.kind, strings);
+      return `
+        <div class="tab-mention-structured-section" aria-label="${escapeAttribute(label)}">
+          <div class="tab-mention-structured-hint">${escapeHtml(label)}</div>
+          ${group.options
+            .map((option) => {
+              const currentIndex = rowIndex;
+              rowIndex += 1;
+              return `
+                <button
+                  class="tab-mention-row structured-mention-row ${escapeAttribute(option.kind)}${getMentionKeyboardActiveClass(currentIndex, activeIndex)}"
+                  data-mention-option-id="${escapeAttribute(option.id)}"
+                  data-mention-kind="${escapeAttribute(option.kind)}"
+                  aria-selected="${currentIndex === activeIndex ? "true" : "false"}"
+                >
+                  ${renderMentionStructuredIcon(option)}
+                  <span class="tab-mention-copy">
+                    <strong>${escapeHtml(option.label)}</strong>
+                    <span>${escapeHtml(option.description)}</span>
+                  </span>
+                  <span class="tab-mention-check" aria-hidden="true">${renderUiIcon("plus")}</span>
+                </button>
+              `;
+            })
+            .join("")}
+        </div>
+      `;
+    })
+    .join("");
+}
+
+function getMentionKeyboardActiveClass(index: number, activeIndex: number): string {
+  return index === activeIndex ? " keyboard-active" : "";
+}
+
+function groupStructuredMentionOptions(
+  options: StructuredMentionOption[],
+): Array<{ kind: StructuredMentionOption["kind"]; options: StructuredMentionOption[] }> {
+  const groups: Array<{ kind: StructuredMentionOption["kind"]; options: StructuredMentionOption[] }> = [];
+  for (const option of options) {
+    const group = groups.find((item) => item.kind === option.kind);
+    if (group) {
+      group.options.push(option);
+    } else {
+      groups.push({ kind: option.kind, options: [option] });
+    }
+  }
+  return groups;
+}
+
+function getStructuredMentionKindLabel(
+  kind: StructuredMentionOption["kind"],
+  strings: ReturnType<typeof getUiStrings>,
+): string {
+  switch (kind) {
+    case "app":
+      return strings.roles.app;
+    case "plugin":
+      return strings.roles.plugin;
+    case "skill":
+      return strings.roles.skill;
+    default:
+      return strings.labels.attachedContext;
+  }
+}
+
+function renderMentionStructuredIcon(option: StructuredMentionOption): string {
+  const iconUrl = option.structuredInput.type === "mention" ? (option.structuredInput.iconUrl ?? "") : "";
+  if (iconUrl && isSafeMessageImageUrl(iconUrl)) {
+    return `
+      <span class="tab-mention-icon image" aria-hidden="true">
+        <img src="${escapeAttribute(iconUrl)}" alt="" loading="lazy" />
+      </span>
+    `;
+  }
+  const icon = option.kind === "app" ? "globe" : option.kind === "skill" ? "zap" : "code";
+  return `<span class="tab-mention-icon fallback-web" aria-hidden="true">${renderUiIcon(icon)}</span>`;
 }
 
 function renderTabMentionHeader(strings: ReturnType<typeof getUiStrings>): string {
@@ -3779,7 +4133,8 @@ function renderActionCardTitle(strings: ReturnType<typeof getUiStrings>, card: A
 }
 
 function renderChatView(strings: ReturnType<typeof getUiStrings>): string {
-  const visibleMessages = state.messages.filter(shouldRenderConversationMessage);
+  const renderableMessages = state.messages.filter(shouldRenderConversationMessage);
+  const { visibleMessages, hiddenCount } = getChatMessageWindow(renderableMessages, state.chatMessageWindowSize);
   const pendingProfileQuestionHtml = renderPendingProfileQuestionCard({
     pending: state.pendingProfileQuestion,
     uiLocale: state.uiLocale,
@@ -3810,6 +4165,11 @@ function renderChatView(strings: ReturnType<typeof getUiStrings>): string {
           !isEmpty
             ? `
               <section class="message-stream" id="messages">
+                ${
+                  hiddenCount > 0
+                    ? `<div class="older-messages-sentinel" data-older-messages-hidden="${hiddenCount}" aria-hidden="true"></div>`
+                    : ""
+                }
                 ${beforePromptActivityMessages.map((message) => renderConversationMessage(message)).join("")}
                 ${promptActivityHtml}
                 ${pendingProfileQuestionHtml}
@@ -3827,7 +4187,7 @@ function partitionPromptActivityMessages(messages: ConversationMessage[]): {
   beforePromptActivityMessages: ConversationMessage[];
   afterPromptActivityMessages: ConversationMessage[];
 } {
-  if (!state.promptActivity) {
+  if (!getCurrentPromptActivityForRender()) {
     return { beforePromptActivityMessages: messages, afterPromptActivityMessages: [] };
   }
   const promptAnchorIndex = findPromptActivityAnchorIndex(messages);
@@ -4036,12 +4396,13 @@ function renderScrollToBottomButton(): string {
 }
 
 function renderPromptActivity(): string {
-  if (!state.promptActivity) {
+  const activity = getCurrentPromptActivityForRender();
+  if (!activity) {
     return "";
   }
 
-  const label = formatPromptActivityLabel(state.promptActivity, state.uiLocale);
-  const detail = getPromptActivityDetail(state.promptActivity.phase, state.uiLocale);
+  const label = formatPromptActivityLabel(activity, state.uiLocale);
+  const detail = getPromptActivityDetail(activity.phase, state.uiLocale);
 
   return `
     <article class="message-row assistant prompt-activity-row" aria-live="polite">
@@ -4058,6 +4419,14 @@ function renderPromptActivity(): string {
   `;
 }
 
+function getCurrentPromptActivityForRender(): PromptActivityState | null {
+  return getEffectivePromptActivityForActiveWork({
+    current: state.promptActivity,
+    activeTurn: isCurrentTurnActive() ? state.activeTurn : null,
+    streamingAssistantMessageIds: state.streamingAssistantMessageIds,
+  });
+}
+
 function createVoiceTranscriptMessageId(role: string | undefined): string {
   voiceTranscriptMessageCounter += 1;
   const normalizedRole = role === "user" ? "user" : "assistant";
@@ -4071,6 +4440,8 @@ function renderConversationMessage(message: ConversationMessage): string {
   const strings = stringsForState();
   const imageHtml = renderConversationMessageImages(message.id, message.images);
   const attachmentHtml = renderConversationMessageAttachments(message.attachments);
+  const structuredInputHtml =
+    message.role === "user" ? renderConversationMessageStructuredInputs(message.structuredInputs) : "";
   const traceHtml = renderMessageTrace(message.id, message.trace);
   const editing = message.role === "user" && state.editingMessageId === message.id;
   const editingClass = editing ? "editing" : "";
@@ -4078,6 +4449,7 @@ function renderConversationMessage(message: ConversationMessage): string {
   const imageResultClass = isImageResultAssistantMessage(message) ? "image-result" : "";
   const actionsHtml = renderMessageActions(message, strings);
   const profileHtml = message.role === "user" ? renderMessageProfileBadge(message.profile) : "";
+  const userMetaHtml = message.role === "user" ? renderMessageMetaPills(profileHtml, structuredInputHtml) : "";
   const voiceMetaHtml = message.delivery === "voice" ? renderVoiceMessageMeta(message) : "";
   const hasTextBody = editing || message.delivery === "voice" || Boolean(message.text.trim());
   const messageBodyHtml =
@@ -4088,10 +4460,10 @@ function renderConversationMessage(message: ConversationMessage): string {
       : `<div class="message-content">${renderMessageContentHtml(message.text, {
           enableYouTubeTimestampLinks: shouldRenderYouTubeTimestampLinks(),
         })}</div>`;
-  const cardHtml = hasTextBody || traceHtml || imageHtml
+  const cardHtml = hasTextBody || traceHtml || imageHtml || userMetaHtml
     ? `
     <div class="message-card ${message.role} ${editingClass} ${voiceClass} ${imageResultClass}">
-      ${profileHtml}
+      ${userMetaHtml}
       ${traceHtml}
       ${
         editing
@@ -4121,6 +4493,48 @@ function renderConversationMessage(message: ConversationMessage): string {
       ${actionsHtml}
     </article>
   `;
+}
+
+function renderMessageMetaPills(profileHtml: string, structuredInputHtml: string): string {
+  const pills = `${profileHtml}${structuredInputHtml}`.trim();
+  if (!pills) {
+    return "";
+  }
+  return `<div class="message-meta-pills">${pills}</div>`;
+}
+
+function renderConversationMessageStructuredInputs(
+  inputs: ConversationMessage["structuredInputs"] | undefined,
+): string {
+  const items = (inputs ?? []).filter((input) => input.id && input.name && input.path);
+  if (!items.length) {
+    return "";
+  }
+  return `
+    <div class="conversation-structured-inputs">
+      ${items
+        .map(
+          (input) => `
+            <span
+              class="summary-chip subtle conversation-structured-input"
+              title="${escapeAttribute(input.description || input.path)}"
+            >
+              ${renderStructuredInputIcon(input)}
+              <span>${escapeHtml(input.name)}</span>
+            </span>
+          `,
+        )
+        .join("")}
+    </div>
+  `;
+}
+
+function renderStructuredInputIcon(input: ConversationMessageStructuredInput): string {
+  if (input.iconUrl && isSafeMessageImageUrl(input.iconUrl)) {
+    return `<span class="summary-chip-icon image" aria-hidden="true"><img src="${escapeAttribute(input.iconUrl)}" alt="" loading="lazy" /></span>`;
+  }
+  const icon = input.type === "skill" || input.path.startsWith("plugin://") ? "code" : "globe";
+  return `<span class="summary-chip-icon" aria-hidden="true">${renderUiIcon(icon)}</span>`;
 }
 
 function renderConversationNoticeMessage(message: ConversationMessage): string {
@@ -4557,38 +4971,13 @@ function renderContextView(strings: ReturnType<typeof getUiStrings>): string {
       ${renderBackToChatHeader(strings, "context")}
       <section class="surface stack">
         <div class="stack-header">
-          <h2>${escapeHtml(strings.labels.attachedContext)}</h2>
+          <h2>${escapeHtml(strings.labels.openTabsPanel)}</h2>
         </div>
+        <p class="stack-copy">${escapeHtml(strings.help.contextRefine)}</p>
         <div class="chips source-chips">
           ${renderContextReferenceChip("open-tabs", renderOpenTabsLabel(strings))}
         </div>
-        ${
-          state.attachments.size || state.fileAttachments.length || state.structuredInputs.length
-            ? `<div class="context-summary">${renderAttachedContextSummary(strings)}</div>`
-            : `<p class="empty-state">${escapeHtml(strings.help.emptyConversation)}</p>`
-        }
       </section>
-
-      ${
-        state.structuredInputs.length
-          ? `<section class="surface stack">
-              <div class="stack-header">
-                <h2>${escapeHtml(strings.labels.attachedContext)}</h2>
-              </div>
-              <div class="chips secondary">
-                ${state.structuredInputs
-                  .map(
-                    (input) => `
-                      <button class="chip active structured-chip" data-structured-id="${escapeAttribute(input.id)}">
-                        ${escapeHtml(structuredInputRoleLabel(input, strings))}: ${escapeHtml(input.name)}
-                      </button>
-                    `,
-                  )
-                  .join("")}
-              </div>
-            </section>`
-          : ""
-      }
 
       ${
         hasPageContext
@@ -4639,7 +5028,14 @@ function renderContextView(strings: ReturnType<typeof getUiStrings>): string {
             </section>`
           : ""
       }
+    </div>
+  `;
+}
 
+function renderSkillsView(strings: ReturnType<typeof getUiStrings>): string {
+  return `
+    <div class="view-scroll context-view skills-view" data-scroll-key="skills-view">
+      ${renderBackToChatHeader(strings, "skills")}
       <section class="surface stack">
         <div class="stack-header">
           <h2>${escapeHtml(strings.labels.codexSkills)}</h2>
@@ -4657,7 +5053,69 @@ function renderContextView(strings: ReturnType<typeof getUiStrings>): string {
   `;
 }
 
-function renderBackToChatHeader(strings: ReturnType<typeof getUiStrings>, view: "context" | "settings"): string {
+function renderPluginMcpView(strings: ReturnType<typeof getUiStrings>): string {
+  const apps = getRenderableConnectedApps();
+  const plugins = getRenderableAppServerPlugins();
+
+  return `
+    <div class="view-scroll context-view plugins-view" data-scroll-key="plugins-view">
+      ${renderBackToChatHeader(strings, "plugins")}
+      <section class="surface stack">
+        <div class="stack-header">
+          <h2>${escapeHtml(strings.labels.apps)}</h2>
+        </div>
+        <p class="stack-copy">${escapeHtml(strings.help.pluginMcp)}</p>
+        <div class="codex-skill-list">
+          ${apps.map((app) => renderConnectedAppToggle(app)).join("")}
+        </div>
+        ${apps.length ? "" : `<p class="empty-state">${escapeHtml(strings.help.emptyApps)}</p>`}
+      </section>
+
+      <section class="surface stack">
+        <div class="stack-header">
+          <h2>${escapeHtml(strings.labels.plugins)}</h2>
+          <button id="reload-plugin-catalog" class="ghost-button small">${escapeHtml(strings.actions.reload)}</button>
+        </div>
+        <div class="codex-skill-list">
+          ${plugins.map((plugin) => renderAppServerPluginToggle(plugin)).join("")}
+        </div>
+        ${plugins.length ? "" : `<p class="empty-state">${escapeHtml(strings.help.emptyPlugins)}</p>`}
+      </section>
+
+      <section class="surface stack">
+        <div class="stack-header">
+          <h2>${escapeHtml(strings.labels.mcpServers)}</h2>
+          <button id="reload-mcp-servers" class="ghost-button small">${escapeHtml(strings.actions.reload)}</button>
+        </div>
+        <div class="codex-skill-list">
+          ${state.mcpServers.map((server) => renderMcpServerRow(server, strings)).join("")}
+        </div>
+        ${state.mcpServers.length ? "" : `<p class="empty-state">${escapeHtml(strings.help.emptyMcpServers)}</p>`}
+      </section>
+    </div>
+  `;
+}
+
+function getRenderableConnectedApps(): CodexAppOption[] {
+  return state.connectedApps.filter((app) => app.isAccessible && app.isEnabled);
+}
+
+function isConnectedAppMentionAvailable(app: CodexAppOption): boolean {
+  return app.isAccessible && app.isEnabled;
+}
+
+function getRenderableAppServerPlugins(): CodexPluginOption[] {
+  return state.appServerPlugins.filter((plugin) => plugin.installed && plugin.enabled);
+}
+
+function isAppServerPluginMentionAvailable(plugin: CodexPluginOption): boolean {
+  return isPluginMentionRouteable(plugin, state.connectedApps);
+}
+
+function renderBackToChatHeader(
+  strings: ReturnType<typeof getUiStrings>,
+  view: "context" | "skills" | "plugins" | "settings",
+): string {
   return `
     <div class="view-return-header ${view}" data-view-return-header="${escapeAttribute(view)}">
       <button class="settings-back" data-view="chat" type="button">
@@ -4666,6 +5124,112 @@ function renderBackToChatHeader(strings: ReturnType<typeof getUiStrings>, view: 
       </button>
     </div>
   `;
+}
+
+function renderConnectedAppToggle(app: CodexAppOption): string {
+  const strings = stringsForState();
+  const selected = isStructuredInputSelected(app.id);
+  const detail = app.description || app.path;
+  return `
+    <label
+      class="codex-skill-toggle mention-toggle ${selected ? "enabled" : ""}"
+    >
+      ${renderPluginMcpRowIcon(app.iconUrl, "globe")}
+      <span class="codex-skill-copy">
+        <strong>${escapeHtml(app.name)}</strong>
+        <span>${escapeHtml(detail)}</span>
+      </span>
+      <span class="settings-switch codex-skill-switch">
+        <input
+          type="checkbox"
+          data-app-id="${escapeAttribute(app.id)}"
+          aria-label="${escapeAttribute(app.name)}"
+          ${selected ? "checked" : ""}
+        />
+        <span aria-hidden="true"></span>
+      </span>
+    </label>
+  `;
+}
+
+function renderAppServerPluginToggle(plugin: CodexPluginOption): string {
+  const strings = stringsForState();
+  const connectionState = getPluginConnectionState(plugin, state.connectedApps);
+  const connectionRequired = connectionState === "connection-required";
+  const detail =
+    connectionRequired
+      ? strings.status.setupNeeded
+      : plugin.description || plugin.marketplaceName || plugin.path;
+  return `
+    <div
+      class="codex-skill-toggle mention-toggle ${connectionRequired ? "connection-required" : ""}"
+    >
+      ${renderPluginMcpRowIcon(plugin.iconUrl, "code")}
+      <span class="codex-skill-copy">
+        <strong>${escapeHtml(plugin.name)}</strong>
+        <span>${escapeHtml(detail)}</span>
+      </span>
+      ${connectionRequired ? renderPluginConnectionButton(plugin, strings) : renderPluginAvailabilityPill(connectionState, strings)}
+    </div>
+  `;
+}
+
+function renderPluginConnectionButton(plugin: CodexPluginOption, strings: ReturnType<typeof getUiStrings>): string {
+  return `
+    <button
+      class="plugin-connect-row-action"
+      type="button"
+      data-plugin-settings-id="${escapeAttribute(plugin.id)}"
+    >
+      ${escapeHtml(strings.actions.connect)}
+    </button>
+  `;
+}
+
+function renderPluginAvailabilityPill(
+  connectionState: ReturnType<typeof getPluginConnectionState>,
+  strings: ReturnType<typeof getUiStrings>,
+): string {
+  const label = connectionState === "available" ? strings.status.connected : strings.status.workspaceActive;
+  return `<span class="plugin-connect-row-action plugin-connect-row-action-muted" aria-hidden="true">${escapeHtml(label)}</span>`;
+}
+
+function renderPluginMcpRowIcon(iconUrl: string | undefined, fallbackIcon: UiIconName): string {
+  if (iconUrl && isSafeMessageImageUrl(iconUrl)) {
+    return `<span class="runtime-skill-icon image" aria-hidden="true"><img src="${escapeAttribute(iconUrl)}" alt="" loading="lazy" /></span>`;
+  }
+  return `<span class="runtime-skill-icon" aria-hidden="true">${renderUiIcon(fallbackIcon)}</span>`;
+}
+
+function renderMcpServerRow(server: CodexMcpServerOption, strings: ReturnType<typeof getUiStrings>): string {
+  const needsLogin = server.authStatus === "notLoggedIn" || server.authStatus === "oauth";
+  return `
+    <div class="codex-skill-toggle mcp-server-row ${server.isAuthenticated ? "enabled" : ""}">
+      <span class="runtime-skill-icon" aria-hidden="true">${renderUiIcon("globe")}</span>
+      <span class="codex-skill-copy">
+        <strong>${escapeHtml(server.name)}</strong>
+        <span>${escapeHtml(server.description || server.path)}</span>
+      </span>
+      <span class="runtime-skill-actions">
+        <span class="runtime-skill-status ${server.isAuthenticated ? "ready" : "missing"}">
+          ${escapeHtml(server.isAuthenticated ? strings.status.connected : strings.status.setupNeeded)}
+        </span>
+        ${
+          needsLogin && !server.isAuthenticated
+            ? `<button
+                type="button"
+                class="ghost-button small"
+                data-mcp-oauth-server="${escapeAttribute(server.name)}"
+              >${escapeHtml(strings.actions.connect)}</button>`
+            : ""
+        }
+      </span>
+    </div>
+  `;
+}
+
+function isStructuredInputSelected(inputId: string): boolean {
+  return state.structuredInputs.some((input) => input.id === inputId);
 }
 
 function renderCodexSkillToggle(skill: CodexSkillOption): string {
@@ -4897,6 +5461,7 @@ function renderWorkspaceView(strings: ReturnType<typeof getUiStrings>): string {
               strings.accountHelp,
               `<div class="settings-action-cluster account-settings-actions">
                 <span class="settings-status-pill accent">${escapeHtml(renderAccountBadge())}</span>
+                ${renderAccountEmailPill()}
                 ${state.rateLimits ? `<span class="settings-status-pill">${escapeHtml(renderRateLimitBadge(state.rateLimits))}</span>` : ""}
                 ${!isLoggedIn ? `<button id="chatgpt-login">${escapeHtml(strings.actions.chatgptLogin)}</button>` : ""}
                 <button id="apikey-login">${escapeHtml(strings.actions.apiKeyFallback)}</button>
@@ -5140,6 +5705,19 @@ function createMessageProfileSnapshot(): ConversationMessageProfile | undefined 
     color: normalizeProfileColorForUi(profile.visual?.color),
     icon: profile.visual?.icon ?? DEFAULT_PROFILE_VISUAL_ICON,
   };
+}
+
+function createConversationMessageStructuredInputs(
+  inputs: CodexStructuredInput[],
+): ConversationMessageStructuredInput[] {
+  return inputs.map((input) => ({
+    id: input.id,
+    type: input.type,
+    name: input.name,
+    path: input.path,
+    ...(input.description ? { description: input.description } : {}),
+    ...("iconUrl" in input && input.iconUrl ? { iconUrl: input.iconUrl } : {}),
+  }));
 }
 
 function createProfileEditorState(mode: "create" | "edit", profile?: ProfileTemplate | null): ProfileEditorState {
@@ -5973,7 +6551,22 @@ function renderAttachedContextSummary(strings: ReturnType<typeof getUiStrings>):
 
   const structured = state.structuredInputs.map(
     (input) =>
-      `<span class="summary-chip subtle">${escapeHtml(structuredInputRoleLabel(input, strings))}: ${escapeHtml(input.name)}</span>`,
+      `<span
+        class="summary-chip structured-chip"
+        title="${escapeAttribute(input.description || input.path)}"
+      >
+        ${renderStructuredInputIcon(input)}
+        <span class="structured-chip-text">${escapeHtml(structuredInputRoleLabel(input, strings))}: ${escapeHtml(input.name)}</span>
+        <button
+          type="button"
+          class="summary-chip-remove"
+          data-remove-structured-input-id="${escapeAttribute(input.id)}"
+          title="${escapeAttribute(strings.actions.removeAttachment)}"
+          aria-label="${escapeAttribute(strings.actions.removeAttachment)}"
+        >
+          ${renderUiIcon("x")}
+        </button>
+      </span>`,
   );
 
   const contextReferences = [...currentTabChip, ...chips, ...structured];
@@ -7530,6 +8123,7 @@ function installSmokeHarness(): void {
           ];
       state.composerDraft = text;
       state.mentionQuery = extractMentionQuery(text);
+      state.mentionActiveIndex = 0;
       state.slashQuery = extractSlashQuery(text);
       renderSync();
       const composer = root.querySelector<HTMLTextAreaElement>("#composer");
@@ -7711,6 +8305,8 @@ function installSmokeHarness(): void {
     seedChatFixture(input) {
       state.activeView = "chat";
       state.messages = input.messages;
+      state.chatMessageWindowSize = DEFAULT_CHAT_MESSAGE_WINDOW_SIZE;
+      pendingChatScrollToBottom = true;
       state.actionCards = input.actionCards?.map((card) => ({ ...card })) ?? [];
       renderSync();
       return {
@@ -7856,6 +8452,15 @@ function renderAccountBadge(): string {
   return getUiStrings(state.uiLocale).status.signedOut;
 }
 
+function renderAccountEmailPill(): string {
+  const email = state.accountStatus?.email?.trim();
+  if (!email) {
+    return "";
+  }
+  const strings = getUiStrings(state.uiLocale);
+  return `<span class="settings-status-pill" title="${escapeAttribute(strings.status.appServerAccount(email))}">${escapeHtml(email)}</span>`;
+}
+
 function renderRateLimitBadge(rateLimits: CodexRateLimits): string {
   const strings = getUiStrings(state.uiLocale);
   const bucket = rateLimits.defaultBucket ?? rateLimits.buckets[0];
@@ -7879,10 +8484,22 @@ function isCurrentTurnActive(): boolean {
   return state.activeTurn.threadId === state.threadId;
 }
 
-function canSendCurrentComposerMessage(draft = state.composerDraft): boolean {
+function isCurrentPromptWorkActive(): boolean {
+  return isCurrentTurnActive() || Boolean(state.promptActivity) || state.streamingAssistantMessageIds.size > 0;
+}
+
+function canSendCurrentComposerMessage(
+  draft = state.composerDraft,
+  options: { allowSteer?: boolean } = {},
+): boolean {
+  const currentWorkActive = isCurrentPromptWorkActive();
+  if (currentWorkActive && !options.allowSteer) {
+    return false;
+  }
+
   return canSendComposerMessage({
     draft,
-    turnActive: isCurrentTurnActive(),
+    turnActive: Boolean(options.allowSteer && currentWorkActive),
     promptActivityActive: Boolean(state.promptActivity),
     streamingAssistantActive: state.streamingAssistantMessageIds.size > 0,
     submissionStartingActive: promptSubmissionBootstrapInFlight,
@@ -7921,6 +8538,84 @@ function toggleStructuredInput(input: CodexStructuredInput): void {
   }
 
   state.structuredInputs = [...state.structuredInputs, input];
+}
+
+function setStructuredInputEnabled(input: CodexStructuredInput, enabled: boolean): void {
+  const existing = state.structuredInputs.some((current) => current.id === input.id);
+  if (enabled && !existing) {
+    state.structuredInputs = [...state.structuredInputs, input];
+    return;
+  }
+  if (!enabled && existing) {
+    state.structuredInputs = state.structuredInputs.filter((current) => current.id !== input.id);
+  }
+}
+
+function openPluginConnectionDialog(plugin: CodexPluginOption): void {
+  const companionApp = findCompanionAppForPlugin(plugin, state.connectedApps);
+  const iconUrl = plugin.iconUrl || companionApp?.iconUrl || "";
+  const accountEmail =
+    state.accountStatus?.authMode === "chatgpt" && state.accountStatus.email?.trim()
+      ? state.accountStatus.email.trim()
+      : "";
+  state.pluginConnectionDialog = {
+    kind: "plugin",
+    id: plugin.id,
+    name: plugin.name,
+    description: plugin.description || companionApp?.description || plugin.marketplaceName || plugin.path,
+    ...(companionApp?.installUrl ? { installUrl: companionApp.installUrl } : {}),
+    ...(iconUrl ? { iconUrl } : {}),
+    ...(accountEmail ? { accountEmail } : {}),
+  };
+  closeFloatingSurfaces();
+  render();
+}
+
+function closePluginConnectionDialog(): void {
+  state.pluginConnectionDialog = null;
+  render();
+}
+
+async function confirmPluginConnectionDialog(): Promise<void> {
+  const dialog = state.pluginConnectionDialog;
+  if (!dialog) {
+    return;
+  }
+  state.pluginConnectionDialog = null;
+  try {
+    if (dialog.installUrl) {
+      pendingPluginConnectionCatalogRefresh = true;
+      await sendRuntimeMessage({ type: "app.install.open", url: dialog.installUrl });
+      state.actionStatus = stringsForState().status.connectionRefreshPending;
+      render();
+      window.setTimeout(() => {
+        void refreshPendingPluginConnectionCatalog();
+      }, 2500);
+      return;
+    } else {
+      await sendRuntimeMessage({ type: "mcp.servers.reload" });
+    }
+    await scheduleInitialize({ forceCatalog: true });
+    state.actionStatus = stringsForState().status.connectionRefreshed;
+  } catch (error) {
+    state.actionStatus = toUserFacingRuntimeError(error);
+    render();
+  }
+}
+
+async function refreshPendingPluginConnectionCatalog(): Promise<void> {
+  if (!pendingPluginConnectionCatalogRefresh || document.visibilityState === "hidden") {
+    return;
+  }
+  pendingPluginConnectionCatalogRefresh = false;
+  try {
+    await scheduleInitialize({ forceCatalog: true });
+    state.actionStatus = stringsForState().status.connectionRefreshed;
+  } catch (error) {
+    pendingPluginConnectionCatalogRefresh = true;
+    state.actionStatus = toUserFacingRuntimeError(error);
+  }
+  render();
 }
 
 async function toggleCodexSkillEnabled(skillId: string): Promise<void> {
@@ -8000,6 +8695,7 @@ function getPromptStructuredInputs(): CodexStructuredInput[] {
     {
       playwrightAvailable: isPlaywrightRuntimeEnabled(),
     },
+    state.connectedApps,
   );
 }
 
@@ -8011,12 +8707,66 @@ async function removeComposerCommandPillSelection(pillId: string, kind: Composer
   scheduleConversationPersist();
 }
 
-function findMentionOption(id: string) {
-  return listMentionOptions(state.mentionQuery ?? "", state.uiLocale, {
+type MentionKeyboardOption =
+  | { kind: "tab-action" }
+  | { kind: "tab"; tabId: number }
+  | { kind: "structured"; optionId: string };
+
+function getMentionOptionsForState(): MentionOption[] {
+  if (state.mentionQuery === null) {
+    return [];
+  }
+
+  return listMentionOptions(state.mentionQuery, state.uiLocale, {
     apps: state.connectedApps,
     plugins: state.appServerPlugins,
-    skills: state.appServerSkills,
-  }).find((option) => option.id === id);
+    skills: state.appServerSkills.filter((skill) => !isCodexSkillRuntimeBlocked(skill)),
+  }).slice(0, 12);
+}
+
+function getTabMentionOptionsForState(): OpenTabContext[] {
+  if (state.mentionQuery === null || state.openTabOptionsState !== "ready") {
+    return [];
+  }
+
+  return listTabMentionOptions(state.openTabOptions, state.mentionQuery, 30);
+}
+
+function getMentionKeyboardOptionsForState(
+  tabs: OpenTabContext[] = getTabMentionOptionsForState(),
+  mentionOptions: MentionOption[] = getMentionOptionsForState(),
+): MentionKeyboardOption[] {
+  if (state.mentionQuery === null) {
+    return [];
+  }
+
+  const options: MentionKeyboardOption[] = [];
+  const openTabsOption = mentionOptions.find(
+    (option): option is Extract<MentionOption, { kind: "context" }> =>
+      option.kind === "context" && option.contextId === "open-tabs",
+  );
+  if (
+    openTabsOption &&
+    (state.openTabOptionsState === "permission" || state.openTabOptionsState === "idle" || state.openTabOptionsState === "error")
+  ) {
+    options.push({ kind: "tab-action" });
+  }
+
+  if (state.openTabOptionsState === "ready") {
+    options.push(...tabs.map((tab) => ({ kind: "tab" as const, tabId: tab.tabId })));
+  }
+
+  options.push(
+    ...mentionOptions
+      .filter(isStructuredMentionOption)
+      .map((option) => ({ kind: "structured" as const, optionId: option.id })),
+  );
+
+  return options;
+}
+
+function findMentionOption(id: string) {
+  return getMentionOptionsForState().find((option) => option.id === id);
 }
 
 function findSlashOption(id: string) {
@@ -8079,6 +8829,25 @@ function moveSlashCommandSelection(key: string): boolean {
   return true;
 }
 
+function moveMentionOptionSelection(key: string): boolean {
+  if (state.mentionQuery === null || !isMentionOptionArrowKey(key)) {
+    return false;
+  }
+
+  const options = getMentionKeyboardOptionsForState();
+  if (!options.length) {
+    return false;
+  }
+
+  state.mentionActiveIndex = getNextMentionOptionIndex(
+    state.mentionActiveIndex,
+    options.length,
+    key === "ArrowDown" ? "down" : "up",
+  );
+  render();
+  return true;
+}
+
 function restoreComposerFocus(preventScroll = false): void {
   const composer = root.querySelector<HTMLTextAreaElement>("#composer");
   if (!composer) {
@@ -8101,6 +8870,58 @@ async function acceptActiveSlashOptionFromComposer(): Promise<boolean> {
   renderSync();
   restoreComposerFocus(true);
   return true;
+}
+
+async function acceptActiveMentionOptionFromComposer(): Promise<boolean> {
+  const options = getMentionKeyboardOptionsForState();
+  const option = options[clampMentionOptionIndex(state.mentionActiveIndex, options.length)];
+  if (!option) {
+    return false;
+  }
+
+  await applyMentionKeyboardOption(option);
+  renderSync();
+  restoreComposerFocus(true);
+  return true;
+}
+
+async function applyMentionKeyboardOption(option: MentionKeyboardOption): Promise<void> {
+  if (option.kind === "tab-action") {
+    await refreshOpenTabSuggestions({ requestPermission: true });
+    return;
+  }
+
+  if (option.kind === "tab") {
+    toggleTabMentionSelection(option.tabId);
+    return;
+  }
+
+  const mentionOption = findMentionOption(option.optionId);
+  if (mentionOption && isStructuredMentionOption(mentionOption)) {
+    applyStructuredMentionOption(mentionOption);
+  }
+}
+
+function toggleTabMentionSelection(tabId: number): boolean {
+  if (!Number.isFinite(tabId)) {
+    return false;
+  }
+
+  state.attachments.add("open-tabs");
+  state.selectedTabIds = toggleSelectedTabId(state.selectedTabIds, tabId);
+  if (state.selectedTabIds.length === 0) {
+    state.attachments.delete("open-tabs");
+  }
+  scheduleConversationPersist();
+  return true;
+}
+
+function applyStructuredMentionOption(option: StructuredMentionOption): void {
+  toggleStructuredInput(option.structuredInput);
+  state.mentionQuery = null;
+  state.mentionActiveIndex = 0;
+  state.composerDraft = removeActiveMentionToken(state.composerDraft);
+  scheduleConversationPersist();
 }
 
 function removeActiveMentionToken(value: string): string {
@@ -8145,6 +8966,10 @@ function syncDocumentLanguage(): void {
     ? `${strings.panelDocumentTitle} · ${strings.tabs.workspace}`
     : state.activeView === "context"
       ? `${strings.panelDocumentTitle} · ${strings.tabs.context}`
+      : state.activeView === "skills"
+        ? `${strings.panelDocumentTitle} · ${strings.tabs.skills}`
+        : state.activeView === "plugins"
+          ? `${strings.panelDocumentTitle} · ${strings.tabs.pluginMcp}`
       : `${strings.panelDocumentTitle} · ${strings.tabs.chat}`;
   syncDocumentTheme();
 }
@@ -8200,6 +9025,20 @@ function captureScrollPositions(): Record<string, { scrollTop: number; stickToBo
 function restoreScrollPositions(positions: Record<string, { scrollTop: number; stickToBottom: boolean }>): void {
   root.querySelectorAll<HTMLElement>("[data-scroll-key]").forEach((node) => {
     const key = node.dataset.scrollKey ?? "";
+    if (key === "chat-scroll" && pendingChatScrollAnchor) {
+      node.scrollTop = Math.max(
+        0,
+        node.scrollHeight - pendingChatScrollAnchor.previousScrollHeight + pendingChatScrollAnchor.previousScrollTop,
+      );
+      pendingChatScrollAnchor = null;
+      return;
+    }
+    if (key === "chat-scroll" && pendingChatScrollToBottom) {
+      forceChatScrollToBottom(node);
+      pendingChatScrollToBottom = false;
+      scheduleChatScrollToBottomAfterLayout();
+      return;
+    }
     const snapshot = positions[key];
     if (!snapshot) {
       return;
@@ -8210,6 +9049,30 @@ function restoreScrollPositions(positions: Record<string, { scrollTop: number; s
     }
     node.scrollTop = snapshot.scrollTop;
   });
+}
+
+function forceChatScrollToBottom(container = root.querySelector<HTMLElement>("#chat-scroll")): void {
+  if (!container) {
+    return;
+  }
+  chatScrollUserOverrideUntil = 0;
+  container.scrollTop = Math.max(0, container.scrollHeight - container.clientHeight);
+}
+
+function scheduleChatScrollToBottomAfterLayout(): void {
+  const run = () => {
+    forceChatScrollToBottom();
+    updateScrollToBottomButtonVisibility();
+  };
+  if (typeof window.requestAnimationFrame === "function") {
+    window.requestAnimationFrame(() => {
+      run();
+      window.requestAnimationFrame(run);
+    });
+    return;
+  }
+  window.setTimeout(run, 0);
+  window.setTimeout(run, 80);
 }
 
 function updateScrollToBottomButtonVisibility(): void {
@@ -8235,6 +9098,31 @@ function isChatScrollUserOverrideActive(): boolean {
 function handleChatScroll(): void {
   const container = root.querySelector<HTMLElement>("#chat-scroll");
   if (container) {
+    const renderableMessageCount = state.messages.filter(shouldRenderConversationMessage).length;
+    const hiddenCount = Math.max(0, renderableMessageCount - state.chatMessageWindowSize);
+    if (
+      shouldExpandChatMessageWindowOnScroll(
+        {
+          scrollTop: container.scrollTop,
+          scrollHeight: container.scrollHeight,
+          clientHeight: container.clientHeight,
+        },
+        hiddenCount,
+      )
+    ) {
+      pendingChatScrollAnchor = {
+        previousScrollTop: container.scrollTop,
+        previousScrollHeight: container.scrollHeight,
+      };
+      state.chatMessageWindowSize = calculateNextChatMessageWindowSize(
+        state.chatMessageWindowSize,
+        renderableMessageCount,
+        CHAT_MESSAGE_WINDOW_INCREMENT,
+      );
+      renderSync();
+      updateScrollToBottomButtonVisibility();
+      return;
+    }
     const scrolledAwayFromLatest = shouldShowScrollToBottomButton({
       scrollTop: container.scrollTop,
       scrollHeight: container.scrollHeight,
@@ -8304,6 +9192,27 @@ function parseCssPixelValue(value: string, fallback = 0): number {
   return Number.isFinite(parsed) ? parsed : fallback;
 }
 
+function getComposerTextareaAutosizeMetrics(target: HTMLTextAreaElement): ComposerTextareaAutosizeMetrics {
+  const cached = composerTextareaAutosizeMetricsByElement.get(target);
+  if (cached) {
+    return cached;
+  }
+
+  const computedStyle = getComputedStyle(target);
+  const lineHeight = parseCssPixelValue(computedStyle.lineHeight, 21);
+  const paddingTop = parseCssPixelValue(computedStyle.paddingTop);
+  const paddingBottom = parseCssPixelValue(computedStyle.paddingBottom);
+  const minHeight = parseCssPixelValue(computedStyle.minHeight, lineHeight * 2 + paddingTop + paddingBottom);
+  const metrics = {
+    lineHeight,
+    paddingTop,
+    paddingBottom,
+    minHeight,
+  };
+  composerTextareaAutosizeMetricsByElement.set(target, metrics);
+  return metrics;
+}
+
 function resizeComposerTextarea(composer?: HTMLTextAreaElement | null): void {
   const target = composer ?? root.querySelector<HTMLTextAreaElement>("#composer");
   if (!target) {
@@ -8312,11 +9221,7 @@ function resizeComposerTextarea(composer?: HTMLTextAreaElement | null): void {
 
   target.style.height = "auto";
 
-  const computedStyle = getComputedStyle(target);
-  const lineHeight = parseCssPixelValue(computedStyle.lineHeight, 21);
-  const paddingTop = parseCssPixelValue(computedStyle.paddingTop);
-  const paddingBottom = parseCssPixelValue(computedStyle.paddingBottom);
-  const minHeight = parseCssPixelValue(computedStyle.minHeight, lineHeight * 2 + paddingTop + paddingBottom);
+  const { lineHeight, paddingTop, paddingBottom, minHeight } = getComposerTextareaAutosizeMetrics(target);
   const nextSize = calculateComposerTextareaAutosize({
     scrollHeight: target.scrollHeight,
     lineHeight,
@@ -8337,6 +9242,38 @@ function rememberComposerInteraction(composer?: HTMLTextAreaElement | null): voi
   state.composerSelectionStart = target.selectionStart ?? target.value.length;
   state.composerSelectionEnd = target.selectionEnd ?? target.value.length;
   resizeComposerTextarea(target);
+}
+
+function bindPluginMcpControls(rootElement: HTMLElement): void {
+  rootElement.querySelector<HTMLButtonElement>("#reload-plugin-catalog")?.addEventListener("click", async () => {
+    const strings = stringsForState();
+    try {
+      await scheduleInitialize({ forceCatalog: true });
+      state.actionStatus = strings.status.connectionRefreshed;
+    } catch (error) {
+      state.actionStatus = toUserFacingRuntimeError(error);
+    }
+    render();
+  });
+
+  rootElement.querySelectorAll<HTMLElement>("[data-plugin-settings-id]").forEach((row) => {
+    const openSettings = (event: Event): void => {
+      const plugin = state.appServerPlugins.find((item) => item.id === row.dataset.pluginSettingsId);
+      if (!plugin) {
+        return;
+      }
+      openPluginConnectionDialog(plugin);
+    };
+
+    row.addEventListener("click", openSettings);
+    row.addEventListener("keydown", (event) => {
+      if (event.key !== "Enter" && event.key !== " ") {
+        return;
+      }
+      event.preventDefault();
+      openSettings(event);
+    });
+  });
 }
 
 function bindEvents(): void {
@@ -8518,6 +9455,7 @@ function bindEvents(): void {
     state.appMenuOpen = false;
     state.browserActionPermissionMenuOpen = false;
     state.mentionQuery = null;
+    state.mentionActiveIndex = 0;
     state.slashQuery = null;
     state.composerModelMenuOpen = !state.composerModelMenuOpen;
     renderSync();
@@ -8716,6 +9654,7 @@ function bindEvents(): void {
     state.browserActionPermissionMenuOpen = false;
     state.attachmentMenuOpen = !state.attachmentMenuOpen;
     state.mentionQuery = null;
+    state.mentionActiveIndex = 0;
     state.slashQuery = null;
     render();
   });
@@ -8754,9 +9693,9 @@ function bindEvents(): void {
   installImageAnnotationEditorHandlers();
   installComposerDropHandlers();
 
-  root.querySelectorAll<HTMLButtonElement>("[data-structured-id]").forEach((button) => {
+  root.querySelectorAll<HTMLButtonElement>("[data-remove-structured-input-id]").forEach((button) => {
     button.addEventListener("click", async () => {
-      const id = button.dataset.structuredId;
+      const id = button.dataset.removeStructuredInputId;
       if (!id) {
         return;
       }
@@ -8779,6 +9718,7 @@ function bindEvents(): void {
     state.composerModelMenuOpen = false;
     state.browserActionPermissionMenuOpen = false;
     state.mentionQuery = null;
+    state.mentionActiveIndex = 0;
     state.slashQuery = null;
     const nextOpen = !state.appMenuOpen;
     state.appMenuOpen = nextOpen;
@@ -8798,6 +9738,7 @@ function bindEvents(): void {
       state.composerModelMenuOpen = false;
       state.browserActionPermissionMenuOpen = false;
       state.mentionQuery = null;
+      state.mentionActiveIndex = 0;
       state.slashQuery = null;
       const action = button.dataset.topQuickAction;
       if (action === "summarize-page") {
@@ -8992,7 +9933,7 @@ function bindEvents(): void {
     const primaryActionChanged = didComposerPrimaryActionChangeForDraftInput({
       previousComposerDraft,
       nextComposerDraft: target.value,
-      currentWorkActive: isCurrentTurnActive() || Boolean(state.promptActivity),
+      currentWorkActive: isCurrentPromptWorkActive(),
       liveActive: state.voiceEnabled,
       compositionInProgress: compositionActive,
     });
@@ -9007,6 +9948,9 @@ function bindEvents(): void {
     }
     state.mentionQuery = extractMentionQuery(target.value);
     state.slashQuery = extractSlashQuery(target.value);
+    if (previousMentionQuery !== state.mentionQuery) {
+      state.mentionActiveIndex = 0;
+    }
     if (previousSlashQuery !== state.slashQuery) {
       state.slashActiveIndex = 0;
     }
@@ -9060,6 +10004,9 @@ function bindEvents(): void {
     rememberComposerInteraction(target);
     state.mentionQuery = extractMentionQuery(target.value);
     state.slashQuery = extractSlashQuery(target.value);
+    if (previousMentionQuery !== state.mentionQuery) {
+      state.mentionActiveIndex = 0;
+    }
     if (previousSlashQuery !== state.slashQuery) {
       state.slashActiveIndex = 0;
     }
@@ -9069,7 +10016,7 @@ function bindEvents(): void {
     const primaryActionChanged = didComposerPrimaryActionChangeForDraftInput({
       previousComposerDraft,
       nextComposerDraft: target.value,
-      currentWorkActive: isCurrentTurnActive() || Boolean(state.promptActivity),
+      currentWorkActive: isCurrentPromptWorkActive(),
       liveActive: state.voiceEnabled,
     });
     if (primaryActionChanged) {
@@ -9095,12 +10042,19 @@ function bindEvents(): void {
       rememberComposerInteraction(event.currentTarget as HTMLTextAreaElement);
       return;
     }
+    if (moveMentionOptionSelection(event.key)) {
+      event.preventDefault();
+      rememberComposerInteraction(event.currentTarget as HTMLTextAreaElement);
+      return;
+    }
 
     if (shouldInterceptComposerDropdownOnEnter(keyInput)) {
       event.preventDefault();
       rememberComposerInteraction(event.currentTarget as HTMLTextAreaElement);
       if (state.slashQuery !== null) {
         void acceptActiveSlashOptionFromComposer();
+      } else if (state.mentionQuery !== null) {
+        void acceptActiveMentionOptionFromComposer();
       }
       return;
     }
@@ -9111,7 +10065,7 @@ function bindEvents(): void {
       return;
     }
     event.preventDefault();
-    if (!canSendCurrentComposerMessage()) {
+    if (!canSendCurrentComposerMessage(undefined, { allowSteer: true })) {
       rememberComposerInteraction(event.currentTarget as HTMLTextAreaElement);
       return;
     }
@@ -9135,15 +10089,9 @@ function bindEvents(): void {
   root.querySelectorAll<HTMLButtonElement>("[data-tab-mention-id]").forEach((button) => {
     button.addEventListener("click", () => {
       const tabId = Number(button.dataset.tabMentionId);
-      if (!Number.isFinite(tabId)) {
+      if (!toggleTabMentionSelection(tabId)) {
         return;
       }
-      state.attachments.add("open-tabs");
-      state.selectedTabIds = toggleSelectedTabId(state.selectedTabIds, tabId);
-      if (state.selectedTabIds.length === 0) {
-        state.attachments.delete("open-tabs");
-      }
-      scheduleConversationPersist();
       renderSync();
       const composer = root.querySelector<HTMLTextAreaElement>("#composer");
       if (composer) {
@@ -9158,6 +10106,7 @@ function bindEvents(): void {
 
   root.querySelector<HTMLButtonElement>("[data-tab-mention-done]")?.addEventListener("click", () => {
     state.mentionQuery = null;
+    state.mentionActiveIndex = 0;
     state.composerDraft = removeActiveMentionToken(state.composerDraft);
     scheduleConversationPersist();
     renderSync();
@@ -9177,7 +10126,14 @@ function bindEvents(): void {
       if (!option) {
         return;
       }
-      await refreshOpenTabSuggestions({ requestPermission: true });
+      if (option.kind === "context") {
+        await refreshOpenTabSuggestions({ requestPermission: true });
+        return;
+      }
+
+      applyStructuredMentionOption(option);
+      renderSync();
+      restoreComposerFocus(true);
     });
   });
 
@@ -9258,40 +10214,77 @@ function bindEvents(): void {
     await installSkillArchive(file);
   });
 
-  root.querySelectorAll<HTMLButtonElement>("[data-app-id]").forEach((button) => {
-    button.addEventListener("click", async () => {
-      const app = state.connectedApps.find((item) => item.id === button.dataset.appId);
-      if (!app || !app.isAccessible || !app.isEnabled) {
+  root.querySelectorAll<HTMLInputElement>("[data-app-id]").forEach((input) => {
+    input.addEventListener("change", async () => {
+      const app = state.connectedApps.find((item) => item.id === input.dataset.appId);
+      if (!app || !isConnectedAppMentionAvailable(app)) {
+        input.checked = false;
         return;
       }
-      toggleStructuredInput({
+      setStructuredInputEnabled({
         id: app.id,
         type: "mention",
         name: app.name,
         path: app.path,
         description: app.description,
         token: app.token,
-      });
+        ...(app.iconUrl ? { iconUrl: app.iconUrl } : {}),
+      }, input.checked);
       scheduleConversationPersist();
       render();
     });
   });
 
-  root.querySelectorAll<HTMLButtonElement>("[data-plugin-id]").forEach((button) => {
+  bindPluginMcpControls(root);
+
+  root.querySelector<HTMLButtonElement>("[data-plugin-connect-close]")?.addEventListener("click", () => {
+    closePluginConnectionDialog();
+  });
+
+  root.querySelector<HTMLElement>("[data-plugin-connect-backdrop]")?.addEventListener("click", (event) => {
+    if (event.target === event.currentTarget) {
+      closePluginConnectionDialog();
+    }
+  });
+
+  root.querySelector<HTMLButtonElement>("[data-plugin-connect-confirm]")?.addEventListener("click", () => {
+    void confirmPluginConnectionDialog();
+  });
+
+  root.querySelector<HTMLButtonElement>("#reload-mcp-servers")?.addEventListener("click", async () => {
+    const strings = stringsForState();
+    try {
+      await sendRuntimeMessage({ type: "mcp.servers.reload" });
+      const result = await sendRuntimeMessage<{ mcpServers?: CodexMcpServerOption[] }>({
+        type: "mcp.servers.list",
+        detail: "toolsAndAuthOnly",
+      });
+      state.mcpServers = result.mcpServers ?? state.mcpServers;
+      state.actionStatus = strings.status.connectionRefreshed;
+    } catch (error) {
+      state.actionStatus = toUserFacingRuntimeError(error);
+    }
+    render();
+  });
+
+  root.querySelectorAll<HTMLButtonElement>("[data-mcp-oauth-server]").forEach((button) => {
     button.addEventListener("click", async () => {
-      const plugin = state.appServerPlugins.find((item) => item.id === button.dataset.pluginId);
-      if (!plugin || !plugin.installed || !plugin.enabled) {
+      const name = button.dataset.mcpOauthServer ?? "";
+      if (!name) {
         return;
       }
-      toggleStructuredInput({
-        id: plugin.id,
-        type: "mention",
-        name: plugin.name,
-        path: plugin.path,
-        description: plugin.description,
-        token: plugin.token,
-      });
-      scheduleConversationPersist();
+      const strings = stringsForState();
+      try {
+        await sendRuntimeMessage({ type: "mcp.oauth.login.start", name });
+        const result = await sendRuntimeMessage<{ mcpServers?: CodexMcpServerOption[] }>({
+          type: "mcp.servers.list",
+          detail: "toolsAndAuthOnly",
+        });
+        state.mcpServers = result.mcpServers ?? state.mcpServers;
+        state.actionStatus = strings.status.connectionRefreshed;
+      } catch (error) {
+        state.actionStatus = toUserFacingRuntimeError(error);
+      }
       render();
     });
   });
@@ -9465,6 +10458,7 @@ function bindEvents(): void {
     state.appMenuOpen = false;
     state.composerModelMenuOpen = false;
     state.mentionQuery = null;
+    state.mentionActiveIndex = 0;
     state.slashQuery = null;
     state.browserActionPermissionMenuOpen = !state.browserActionPermissionMenuOpen;
     renderSync();
@@ -9550,6 +10544,7 @@ async function handleAttachmentMenuAction(action: AttachmentMenuAction): Promise
       state.slashQuery = null;
       state.slashActiveIndex = 0;
       state.mentionQuery = "";
+      state.mentionActiveIndex = 0;
       state.composerDraft = ensureTrailingComposerToken(state.composerDraft, "@");
       renderSync();
       await refreshOpenTabSuggestions({ requestPermission: false });
@@ -9568,6 +10563,7 @@ async function handleAttachmentMenuAction(action: AttachmentMenuAction): Promise
       state.attachmentMenuOpen = false;
       state.browserActionPermissionMenuOpen = false;
       state.mentionQuery = null;
+      state.mentionActiveIndex = 0;
       state.slashQuery = "";
       state.slashActiveIndex = 0;
       state.composerDraft = ensureTrailingComposerToken(state.composerDraft, "/");
@@ -9692,9 +10688,12 @@ async function sendPrompt(
 ): Promise<void> {
   const composer = root.querySelector<HTMLTextAreaElement>("#composer");
   const strings = stringsForState();
+  const composerText = composer?.value ?? state.composerDraft;
+  const isDirectComposerTextSend = messageOverride === undefined && composerText.trim().length > 0;
+  const currentWorkActiveAtSubmit = isCurrentPromptWorkActive();
   const message = (messageOverride ?? composer?.value ?? "").trim() || defaultPromptForContext(strings);
   const displayMessage = (options.displayMessage ?? message).trim();
-  if (!canSendCurrentComposerMessage(message)) {
+  if (!canSendCurrentComposerMessage(message, { allowSteer: isDirectComposerTextSend })) {
     return;
   }
 
@@ -9710,6 +10709,7 @@ async function sendPrompt(
       composer.value = "";
     }
     state.mentionQuery = null;
+    state.mentionActiveIndex = 0;
     state.slashQuery = null;
     render();
     return;
@@ -9765,6 +10765,8 @@ async function sendPrompt(
       resetThread: Boolean(options.resetThread),
       threadId: state.threadId || undefined,
       activeTurn: state.activeTurn,
+      currentWorkActive: currentWorkActiveAtSubmit,
+      source: isDirectComposerTextSend ? "composer" : "programmatic",
     });
     sanitizeUnavailableCurrentPageState();
     const nextAttachments = Array.from(state.attachments);
@@ -9777,6 +10779,8 @@ async function sendPrompt(
     const submittedRequestFileAttachments = submittedFileAttachmentState.requestFileAttachments;
     state.fileAttachments = submittedFileAttachmentState.composerFileAttachments;
     const messageProfile = createMessageProfileSnapshot();
+    const submittedMessageStructuredInputs = createConversationMessageStructuredInputs(state.structuredInputs);
+    const submittedPromptStructuredInputs = getPromptStructuredInputs();
     userMessageId = `user-${Date.now()}`;
     clientRequestId = `prompt-${Date.now()}-${Math.random().toString(36).slice(2)}`;
     setActivePromptUserMessageId(resolveActivePromptUserMessageIdForSend(userMessageId, sendAsTurnSteer));
@@ -9787,25 +10791,27 @@ async function sendPrompt(
     promptSubmissionBootstrapInFlight = false;
     promptRequestConversationIds.set(clientRequestId, conversationIdAtStart);
     promptActivitiesByConversationId.set(conversationIdAtStart, state.promptActivity);
-    render();
-
-    const generatedImageAttachments = await createGeneratedImageFileAttachmentsForPrompt(
-      message,
-      contextHint,
-      activeProfileId,
-      submittedRequestFileAttachments,
-    );
-    const nextFileAttachments = [...submittedRequestFileAttachments, ...generatedImageAttachments];
     state.messages.push({
       id: userMessageId,
       role: "user",
       text: displayMessage || message,
       ...(submittedMessageFileAttachments.length ? { attachments: createConversationMessageAttachments(submittedMessageFileAttachments) } : {}),
+      ...(submittedMessageStructuredInputs.length ? { structuredInputs: submittedMessageStructuredInputs } : {}),
       ...(messageProfile ? { profile: messageProfile } : {}),
     });
     rememberCurrentConversationSnapshot();
-    render();
+    renderSync();
     scheduleConversationPersist();
+
+    const generatedImageAttachments = sendAsTurnSteer
+      ? []
+      : await createGeneratedImageFileAttachmentsForPrompt(
+          message,
+          contextHint,
+          activeProfileId,
+          submittedRequestFileAttachments,
+        );
+    const nextFileAttachments = [...submittedRequestFileAttachments, ...generatedImageAttachments];
 
     const result = await sendRuntimeMessageWithConfirmation<{
       threadId: string;
@@ -9831,7 +10837,7 @@ async function sendPrompt(
         readStrategyOverride: state.currentReadStrategy,
         attachments: nextAttachments,
         fileAttachments: nextFileAttachments,
-        structuredInputs: getPromptStructuredInputs(),
+        structuredInputs: submittedPromptStructuredInputs,
         selectedTabIds: state.selectedTabIds,
         historyQuery: state.historyQuery,
         resetThread: options.resetThread,
@@ -10832,6 +11838,145 @@ function completeTurnTraceForConversation(conversationId: string, threadId: stri
   }
 }
 
+function scheduleEmptyAssistantResponseNotice(input: {
+  conversationId: string | null;
+  threadId: string;
+  turnId: string;
+  activeUserMessageId?: string | null;
+}): void {
+  if (!input.threadId || !input.turnId) {
+    return;
+  }
+
+  const key = createEmptyAssistantResponseNoticeTimerKey(input.conversationId, input.threadId, input.turnId);
+  cancelEmptyAssistantResponseNotice(input.threadId, input.turnId, input.conversationId);
+  const timer = setTimeout(() => {
+    pendingEmptyAssistantResponseNoticeTimers.delete(key);
+    const messages = getMessagesForEmptyAssistantResponseNotice(input.conversationId, input.threadId);
+    if (!messages) {
+      return;
+    }
+    const changed = ensureEmptyAssistantResponseNoticeInMessages(
+      messages,
+      input.threadId,
+      input.turnId,
+      input.activeUserMessageId ?? null,
+    );
+    if (!changed) {
+      return;
+    }
+    if (isCurrentEmptyAssistantResponseNoticeConversation(input.conversationId)) {
+      scheduleConversationPersist();
+      render();
+      return;
+    }
+    if (input.conversationId) {
+      void persistDetachedConversation(input.conversationId);
+      renderConversationListIfVisible();
+    }
+  }, EMPTY_ASSISTANT_RESPONSE_NOTICE_DELAY_MS);
+  pendingEmptyAssistantResponseNoticeTimers.set(key, timer);
+}
+
+function cancelEmptyAssistantResponseNotice(
+  threadId: string,
+  turnId: string,
+  conversationId: string | null = state.currentConversationId || null,
+): void {
+  if (!threadId || !turnId) {
+    return;
+  }
+  const keys = new Set([
+    createEmptyAssistantResponseNoticeTimerKey(conversationId, threadId, turnId),
+    createEmptyAssistantResponseNoticeTimerKey(state.currentConversationId || null, threadId, turnId),
+  ]);
+  for (const key of keys) {
+    const timer = pendingEmptyAssistantResponseNoticeTimers.get(key);
+    if (!timer) {
+      continue;
+    }
+    clearTimeout(timer);
+    pendingEmptyAssistantResponseNoticeTimers.delete(key);
+  }
+}
+
+function clearEmptyAssistantResponseNoticeForTurn(
+  threadId: string,
+  turnId: string,
+  conversationId: string | null = state.currentConversationId || null,
+): void {
+  if (!threadId || !turnId) {
+    return;
+  }
+  const messages = getMessagesForEmptyAssistantResponseNotice(conversationId, threadId);
+  if (!messages || !clearEmptyAssistantResponseNotice({ messages, threadId, turnId })) {
+    return;
+  }
+  if (isCurrentEmptyAssistantResponseNoticeConversation(conversationId)) {
+    scheduleConversationPersist();
+    return;
+  }
+  if (conversationId) {
+    void persistDetachedConversation(conversationId);
+  }
+}
+
+function getMessagesForEmptyAssistantResponseNotice(conversationId: string | null, threadId: string): ConversationMessage[] | null {
+  if (isCurrentEmptyAssistantResponseNoticeConversation(conversationId)) {
+    if (threadId && state.threadId && state.threadId !== threadId) {
+      return null;
+    }
+    return state.messages;
+  }
+  return conversationId ? conversationMessagesById.get(conversationId) ?? null : state.messages;
+}
+
+function isCurrentEmptyAssistantResponseNoticeConversation(conversationId: string | null): boolean {
+  return !conversationId || conversationId === state.currentConversationId;
+}
+
+function createEmptyAssistantResponseNoticeTimerKey(
+  conversationId: string | null,
+  threadId: string,
+  turnId: string,
+): string {
+  return `${conversationId || "current"}:${threadId}:${turnId}`;
+}
+
+function ensureEmptyAssistantResponseNoticeInMessages(
+  messages: ConversationMessage[],
+  threadId: string,
+  turnId: string,
+  activeUserMessageId?: string | null,
+): boolean {
+  if (!threadId || !turnId) {
+    return false;
+  }
+
+  const traceMessageId = createTurnTraceMessageId(threadId, turnId);
+  if (!shouldShowEmptyAssistantResponseNotice({ messages, traceMessageId, activeUserMessageId: activeUserMessageId ?? null })) {
+    return false;
+  }
+
+  const text = createEmptyAssistantResponseNotice({
+    locale: state.uiLocale,
+    structuredInputNames: getStructuredInputNamesForEmptyResponseNotice(messages, activeUserMessageId),
+  });
+  let message = messages.find((entry) => entry.id === traceMessageId && entry.role === "assistant");
+  if (!message) {
+    message = {
+      id: `assistant-empty-response-${stableMessageIdPart(`${threadId}-${turnId}`)}`,
+      role: "assistant",
+      text,
+    };
+    messages.push(message);
+    return true;
+  }
+
+  message.text = text;
+  return true;
+}
+
 function completeTurnTraceInMessages(messages: ConversationMessage[], threadId: string, turnId: string): boolean {
   if (!threadId || !turnId) {
     return false;
@@ -11580,6 +12725,7 @@ async function restoreConversationImagePreviews(): Promise<void> {
     return;
   }
 
+  pendingChatScrollToBottom = true;
   render();
   await Promise.allSettled(
     pendingImages.map(async (image) => {
@@ -11595,6 +12741,7 @@ async function restoreConversationImagePreviews(): Promise<void> {
       }
     }),
   );
+  pendingChatScrollToBottom = true;
   render();
 }
 
@@ -12654,7 +13801,11 @@ function appendVoiceInputTranscriptToComposer(transcript: string): void {
   }
   const current = state.composerDraft.trimEnd();
   state.composerDraft = `${current}${current ? " " : ""}${text}`;
+  const previousMentionQuery = state.mentionQuery;
   state.mentionQuery = extractMentionQuery(state.composerDraft);
+  if (previousMentionQuery !== state.mentionQuery) {
+    state.mentionActiveIndex = 0;
+  }
   state.slashQuery = extractSlashQuery(state.composerDraft);
   render();
   window.setTimeout(() => focusComposerAtEnd(), 0);
@@ -13173,6 +14324,8 @@ async function compactCurrentConversation(): Promise<void> {
 }
 
 async function startNewChat(): Promise<void> {
+  flushStreamingAssistantDeltas();
+  await persistConversationBatch.flush();
   const activeProfileId = ensureComposerProfileSelection();
   const result = await sendRuntimeMessage<{ conversation: SavedConversation | null }>({
     type: "conversation.new",
@@ -13181,6 +14334,9 @@ async function startNewChat(): Promise<void> {
   });
   hydrateConversation(result.conversation);
   state.messages = [];
+  state.chatMessageWindowSize = DEFAULT_CHAT_MESSAGE_WINDOW_SIZE;
+  pendingChatScrollToBottom = false;
+  pendingChatScrollAnchor = null;
   state.attachments = new Set();
   state.fileAttachments = [];
   state.selectedTabIds = [];
@@ -13205,26 +14361,30 @@ function scheduleConversationPersist(): void {
 
 async function persistConversation(): Promise<void> {
   const activeProfileId = ensureComposerProfileSelection();
+  let conversationIdForSave = state.currentConversationId;
   const messages = serializeConversationMessagesForStorage(state.messages);
   if (!shouldPersistConversationMessagesForStorage(state.messages)) {
-    if (state.currentConversationId) {
-      state.recentChats = state.recentChats.filter((item) => item.id !== state.currentConversationId);
+    if (conversationIdForSave) {
+      state.recentChats = state.recentChats.filter((item) => item.id !== conversationIdForSave);
     }
     return;
   }
-  if (!state.currentConversationId) {
+  if (!conversationIdForSave) {
     const created = await sendRuntimeMessage<{ conversation: SavedConversation }>({
       type: "conversation.new",
       profileId: activeProfileId,
       model: state.selectedModel,
     });
-    state.currentConversationId = created.conversation.id;
+    conversationIdForSave = created.conversation.id;
+    if (!state.currentConversationId) {
+      state.currentConversationId = conversationIdForSave;
+    }
   }
 
   const result = await sendRuntimeMessage<{ conversation: SavedConversation }>({
     type: "conversation.save",
     conversation: {
-      id: state.currentConversationId,
+      id: conversationIdForSave,
       title: "",
       profileId: activeProfileId,
       model: state.selectedModel || undefined,
@@ -13238,7 +14398,15 @@ async function persistConversation(): Promise<void> {
       updatedAt: Date.now(),
     },
   });
-  state.currentConversationId = result.conversation.id;
+  if (
+    shouldApplyConversationSaveResultToActiveChat({
+      saveStartedConversationId: conversationIdForSave,
+      currentConversationId: state.currentConversationId,
+      savedConversationId: result.conversation.id,
+    })
+  ) {
+    state.currentConversationId = result.conversation.id;
+  }
   state.recentChats = upsertRecentChat(state.recentChats, {
     id: result.conversation.id,
     title: result.conversation.title,
@@ -13322,6 +14490,10 @@ async function sendRuntimeMessageWithConfirmation<TResult>(
       continue;
     }
 
+    if (openRequiredAppConnectionDialog(response)) {
+      return { cancelled: true };
+    }
+
     break;
   }
 
@@ -13330,6 +14502,25 @@ async function sendRuntimeMessageWithConfirmation<TResult>(
   }
 
   return response as TResult;
+}
+
+function openRequiredAppConnectionDialog(response: Record<string, unknown>): boolean {
+  const appConnection = response.appConnection;
+  if (!appConnection || typeof appConnection !== "object") {
+    return false;
+  }
+
+  const connection = appConnection as { kind?: unknown; id?: unknown };
+  if (connection.kind === "plugin" && typeof connection.id === "string") {
+    const plugin = state.appServerPlugins.find((item) => item.id === connection.id);
+    if (!plugin) {
+      return false;
+    }
+    openPluginConnectionDialog(plugin);
+    return true;
+  }
+
+  return false;
 }
 
 function getHarnessConfirmationPrompt(operation: string, fallback: unknown): string {

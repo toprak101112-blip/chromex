@@ -18,12 +18,11 @@ export function buildInfographicPrompt(input: InfographicPromptInput): string {
 
   return [
     "Instructions:",
-    "Create a polished infographic image that makes this page easy to understand.",
-    `Locale/culture: ${locale.nativeName} (${locale.locale}). Match the language, cultural context, reading flow, visual metaphors, and tone to this locale/culture.`,
+    "Create a beautiful visual explainer image for the relevant country/culture that best explains the context of this page.",
+    `Locale/culture: ${locale.nativeName} (${locale.locale}). Use this as the language, cultural, reading-flow, and visual-tone context.`,
     "Source:",
     "Use the attached current-page context as the source of truth.",
-    "Choose the layout, aspect ratio, composition, and visual structure freely based on what best explains this specific page.",
-    siteFocus ? `Page focus: ${siteFocus}` : "",
+    siteFocus ? `Context focus: ${siteFocus}` : "",
     "Do not invent names, numbers, quotes, claims, dates, citations, or logos that are not in the page context.",
     "Page metadata:",
     `Title: ${title}`,
@@ -67,15 +66,15 @@ function inferInfographicSiteTemplate(input: InfographicPromptInput): Infographi
 function createSiteFocusPrompt(template: InfographicSiteTemplate): string {
   switch (template) {
     case "youtube":
-      return "explain the video through its main story, key moments, and takeaway.";
+      return "the video's main context and takeaway.";
     case "paper":
-      return "explain the paper through problem, method, evidence, result, limitation, and implication.";
+      return "the paper's core question, contribution, and implication.";
     case "news":
-      return "explain what happened, why it matters, and what to watch next.";
+      return "what happened and why it matters.";
     case "information":
-      return "turn the page into a simple map, checklist, process, or comparison.";
+      return "the page's main context and most useful takeaway.";
     case "default":
-      return "choose the clearest structure from summary cards, timeline, comparison, checklist, or concept map.";
+      return "the page's main context and most useful takeaway.";
   }
 }
 

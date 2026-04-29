@@ -1,6 +1,7 @@
 import type {
   CodexActiveTurn,
   CodexAppOption,
+  CodexMcpServerOption,
   CodexModelOption,
   CodexModelReroute,
   CodexPluginOption,
@@ -79,7 +80,8 @@ export type BridgeEvent =
   | { type: "account.updated"; authMode: "chatgpt" | "apikey" | null; planType: string | null }
   | { type: "account.rate_limits.updated"; rateLimits: CodexRateLimits | null }
   | { type: "model.rerouted"; reroute: CodexModelReroute }
-  | { type: "catalog.updated"; kind: "skills" | "apps" }
+  | { type: "catalog.updated"; kind: "skills" | "apps" | "mcp" }
+  | { type: "mcp.oauth.login.completed"; serverName: string; success: boolean; error: string | null }
   | { type: "route.started"; clientRequestId: string | null }
   | { type: "route.plan.created"; plan: AgenticRoutePlan }
   | { type: "browser.action.plan.started"; clientRequestId: string | null }
@@ -111,6 +113,7 @@ export interface AccountStatus {
   codexAuthenticated: boolean;
   multimodalAvailable: boolean;
   openAiApiKeyConfigured: boolean;
+  email?: string | null;
   planType?: string | null;
 }
 
@@ -251,6 +254,16 @@ export interface BridgeCodexPlane {
   listSkills(params: { cwd?: string; forceReload?: boolean; extraUserRoots?: string[] }): Promise<CodexSkillOption[]>;
   listApps(params: { threadId?: string; forceRefetch?: boolean }): Promise<CodexAppOption[]>;
   listPlugins(params: { cwd?: string }): Promise<CodexPluginOption[]>;
+  listMcpServers(params?: { cursor?: string; limit?: number; detail?: "full" | "toolsAndAuthOnly" }): Promise<CodexMcpServerOption[]>;
+  startMcpOauthLogin(params: { name: string; scopes?: string[]; timeoutSecs?: number }): Promise<{ authorizationUrl: string }>;
+  callMcpTool(params: {
+    threadId: string;
+    server: string;
+    tool: string;
+    arguments?: Record<string, unknown>;
+    _meta?: Record<string, unknown>;
+  }): Promise<{ content: unknown[]; structuredContent?: unknown; isError?: boolean; meta?: unknown }>;
+  reloadMcpServers(): Promise<{ ok: true }>;
   readRateLimits(): Promise<CodexRateLimits | null>;
   openSession(params: SessionParams): Promise<{ threadId: string }>;
   resumeSession(params: { threadId: string }): Promise<{ threadId: string }>;

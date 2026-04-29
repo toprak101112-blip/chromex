@@ -155,13 +155,17 @@ export function normalizeAgenticRoutePlan(rawPlan: unknown, input: AgenticRouteI
       : isImageGenerationExecution
         ? "image-generate"
         : rawTaskCandidate;
+  const structuredInputIds = normalizeStructuredInputIds(raw.structuredInputIds, input);
   const normalizedIntent = normalizeIntent(raw.intent, input, imageEdit);
   const intent = textPageSummaryRequest
     ? normalizeTextPageSummaryIntent(normalizedIntent, input)
     : rawTask === "image-generate"
         ? normalizeImageGenerationIntent(normalizedIntent, input)
         : normalizedIntent;
-  const browserControl = normalizeBrowserControl(raw.browserControl, intent, input);
+  const browserControl = normalizeBrowserControlForStructuredInputs(
+    normalizeBrowserControl(raw.browserControl, intent, input),
+    structuredInputIds,
+  );
   if (intent.target === "browser-history" && !intent.needsClarification) {
     pushRequest({
       source: "history",
@@ -214,6 +218,7 @@ export function normalizeAgenticRoutePlan(rawPlan: unknown, input: AgenticRouteI
     task: task.task,
     contextMode: deriveContextMode(normalizedContextRequests, input.fileAttachments.length > 0),
     contextRequests: normalizedContextRequests,
+    structuredInputIds,
     historyQuery,
     requiresVision,
     pageReadStrategy,
@@ -238,6 +243,7 @@ export function createFallbackAgenticRoutePlan(input: AgenticRouteInput, reason?
         required: true,
         reason: "Explicitly attached by the user.",
       })),
+      structuredInputIds: [],
       requiresVision: input.readStrategyOverride === "vision" || input.readStrategyOverride === "hybrid",
       selectedProfileId: input.selectedProfileId,
       selectedModel: input.selectedModel,
@@ -267,6 +273,32 @@ export function createFallbackAgenticRoutePlan(input: AgenticRouteInput, reason?
     },
     input,
   );
+}
+
+function normalizeStructuredInputIds(value: unknown, input: AgenticRouteInput): string[] {
+  if (!Array.isArray(value)) {
+    return [];
+  }
+
+  const available = new Set((input.availableStructuredInputs ?? []).map((structuredInput) => structuredInput.id));
+  if (!available.size) {
+    return [];
+  }
+
+  const seen = new Set<string>();
+  const ids: string[] = [];
+  for (const item of value) {
+    const id = typeof item === "string" ? item.trim() : "";
+    if (!id || !available.has(id) || seen.has(id)) {
+      continue;
+    }
+    seen.add(id);
+    ids.push(id);
+    if (ids.length >= 8) {
+      break;
+    }
+  }
+  return ids;
 }
 
 export function routePlanToPromptRoutingPlan(plan: AgenticRoutePlan, input: AgenticRouteInput): PromptRoutingPlan {
@@ -395,6 +427,23 @@ function normalizeBrowserControl(
     ...(fallbackMode && fallbackMode !== mode ? { fallbackMode } : {}),
     ...(preconditions.length ? { preconditions } : {}),
     reason,
+  };
+}
+
+function normalizeBrowserControlForStructuredInputs(
+  browserControl: AgenticBrowserControlRouting,
+  structuredInputIds: string[],
+): AgenticBrowserControlRouting {
+  if (!structuredInputIds.length || !browserControl.shouldControl) {
+    return browserControl;
+  }
+
+  return {
+    shouldControl: false,
+    mode: "dom",
+    surface: "active-tab",
+    ...(browserControl.preconditions?.length ? { preconditions: browserControl.preconditions } : {}),
+    reason: "Connected app, plugin, or MCP input was selected, so the request is routed through Codex tools instead of browser automation.",
   };
 }
 

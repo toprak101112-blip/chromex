@@ -7,6 +7,7 @@ import {
   getPromptActivitySteps,
 } from "../src/sidepanel/prompt-activity.js";
 import {
+  getEffectivePromptActivityForActiveWork,
   promotePromptActivityForAssistantProgress,
   promotePromptActivityForTurnActivity,
   shouldClearPromptActivityOnMessageCompleted,
@@ -87,6 +88,15 @@ describe("prompt activity labels", () => {
   test("restores a response progress indicator for tool-only activity events", () => {
     expect(
       promotePromptActivityForAssistantProgress({
+        current: null,
+        activeTurn: { threadId: "thread-1", turnId: "turn-tool-only" },
+      }),
+    ).toEqual({ clientRequestId: "turn:turn-tool-only", phase: "responding" });
+  });
+
+  test("derives a visible progress indicator when a tool turn is active but prompt activity was cleared", () => {
+    expect(
+      getEffectivePromptActivityForActiveWork({
         current: null,
         activeTurn: { threadId: "thread-1", turnId: "turn-tool-only" },
       }),

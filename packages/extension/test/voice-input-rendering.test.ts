@@ -49,6 +49,20 @@ describe("voice input and live action rendering", () => {
     }`);
   });
 
+  test("reuses composer autosize style metrics while the textarea DOM is stable", () => {
+    const resizeBody = extractFunctionBody("resizeComposerTextarea");
+    const firstRenderSyncIndex = sidepanelSource.indexOf("renderSync();");
+    const metricsCacheIndex = sidepanelSource.indexOf("const composerTextareaAutosizeMetricsByElement");
+
+    expect(sidepanelSource).toContain("composerTextareaAutosizeMetricsByElement");
+    expect(sidepanelSource).toContain("function getComposerTextareaAutosizeMetrics");
+    expect(metricsCacheIndex).toBeGreaterThanOrEqual(0);
+    expect(firstRenderSyncIndex).toBeGreaterThanOrEqual(0);
+    expect(metricsCacheIndex).toBeLessThan(firstRenderSyncIndex);
+    expect(resizeBody).toContain("getComposerTextareaAutosizeMetrics(target)");
+    expect(resizeBody).not.toContain("getComputedStyle(target)");
+  });
+
   test("composer dictation updates the draft instead of sending prompts", () => {
     const dictationBody = extractFunctionBody("appendVoiceInputTranscriptToComposer");
     expect(dictationBody).toContain("state.composerDraft");

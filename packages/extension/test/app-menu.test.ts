@@ -136,9 +136,17 @@ describe("top app menu", () => {
       deleteChat: "채팅 삭제",
       more: "더보기",
       createInfographic: "인포그래픽 만들기",
-      context: "컨텍스트",
+      skills: "스킬",
+      pluginMcp: "플러그인/MCP",
       settingsHelp: "설정 및 도움말",
     });
+  });
+
+  test("omits context from the top menu while keeping skills and plugin MCP destinations", () => {
+    expect(sidepanelSource).not.toContain('data-menu-view="context" role="menuitem"');
+    expect(sidepanelSource).toContain('data-menu-view="skills"');
+    expect(sidepanelSource).toContain('data-menu-view="plugins"');
+    expect(sidepanelSource).toContain('data-menu-view="workspace"');
   });
 
   test("localizes current-page infographic quick action", () => {
@@ -163,7 +171,8 @@ describe("top app menu", () => {
     expect(readFinalDeclaration(".app-menu-row", "min-height")).toBe("40px");
     expect(readFinalDeclaration(".app-menu-row", "padding")).toBe("0 16px");
     expect(readFinalDeclaration(".app-menu-label", "font-size")).toBe("13px");
-    expect(readFinalDeclaration(".app-menu-delete-button", "width")).toBe("28px");
+    expect(readFinalDeclaration(".app-menu-chat-row", "grid-template-columns")).toBe("minmax(0, 1fr) 44px");
+    expect(readFinalDeclaration(".app-menu-delete-button", "width")).toBe("44px");
     expect(readFinalDeclaration(".app-menu-delete-button", "min-height")).toBe("40px");
     expect(readFinalDeclaration(".app-menu-delete-button", "opacity")).toBe("1");
   });
@@ -174,6 +183,23 @@ describe("top app menu", () => {
     expect(sidepanelSource).toContain('renderUiIcon("trash")');
     expect(readFinalDeclaration(".recent-chat-progress", "animation")).toBe("recent-chat-spin 0.9s linear infinite");
     expect(readFinalDeclaration(".recent-chat-time", "font-size")).toBe("12px");
+  });
+
+  test("shows recent chat delete as a neutral trash icon that only turns red on direct hover", () => {
+    expect(readFinalDeclaration(".app-menu-delete-button", "color")).toBe("#ffffff");
+    expect(readFinalDeclaration(".app-menu-delete-button", "background")).toBe("transparent");
+    expect(readFinalDeclaration(".app-menu-delete-button:hover", "color")).toBe("#ff5a52");
+    expect(readFinalDeclaration(".app-menu-delete-button:hover", "background")).toBe("transparent");
+    expect(readFinalDeclaration(".app-menu-chat-row:hover .app-menu-delete-button", "color")).toBe("");
+    expect(readFinalDeclaration(".app-menu-chat-row:focus-within .app-menu-delete-button", "color")).toBe("");
+    expect(readFinalDeclaration(".app-menu-chat-row:hover", "background")).toBe("rgba(255, 255, 255, 0.1)");
+    expect(readFinalDeclaration(".app-menu-chat-row.selected", "background")).toBe("rgba(255, 255, 255, 0.1)");
+    expect(readFinalDeclaration(".app-menu-chat-row.selected .app-menu-row", "background")).toBe("transparent");
+    expect(readFinalDeclaration(".app-menu-delete-button .ui-lucide-icon", "width")).toBe("18px");
+    expect(readFinalDeclaration(".app-menu-delete-button .ui-lucide-icon", "height")).toBe("18px");
+    expect(css).not.toContain(".app-menu-delete-button::before");
+    expect(css).not.toContain(".app-menu-delete-button::after");
+    expect(sidepanelSource).toContain('class="app-menu-chat-row ${chat.selected ? "selected" : ""}"');
   });
 
   test("keeps recent chat delete controls visible in light theme", () => {

@@ -242,6 +242,10 @@ describe("site suggestions", () => {
     );
     expect(naverCards[0]?.title).toBe("기사 핵심 요약");
     expect(naverCards.find((card) => card.id === "news-infographic")?.title).toBe("인포그래픽 만들기");
+    expect(naverCards.find((card) => card.id === "news-infographic")).toMatchObject({
+      kind: "workflow",
+    });
+    expect(naverCards.find((card) => card.id === "news-infographic")).not.toHaveProperty("prompt");
     expect(reutersCards.map((card) => card.id)).toEqual(
       expect.arrayContaining(["news-article-summary", "news-infographic"]),
     );

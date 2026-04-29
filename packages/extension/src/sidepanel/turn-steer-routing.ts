@@ -5,12 +5,22 @@ export interface TurnSteerRoutingInput {
   resetThread?: boolean;
   threadId: string | undefined;
   activeTurn: CodexActiveTurn | null;
+  currentWorkActive?: boolean;
+  source?: "composer" | "programmatic";
 }
 
 export function shouldSendComposerAsTurnSteer(input: TurnSteerRoutingInput): boolean {
-  if (input.resetThread || !input.draft.trim() || !input.threadId || !input.activeTurn?.turnId) {
+  if (input.resetThread || !input.draft.trim()) {
     return false;
   }
 
-  return input.activeTurn.threadId === input.threadId;
+  if (input.source === "programmatic") {
+    return false;
+  }
+
+  if (input.activeTurn?.turnId) {
+    return Boolean(input.threadId && input.activeTurn.threadId === input.threadId);
+  }
+
+  return Boolean(input.currentWorkActive);
 }

@@ -41,7 +41,7 @@ describe("agentic browser control indicator", () => {
   });
 
   test("lets the user stop in-flight browser control and removes the page indicator immediately", () => {
-    expect(sidepanelSource).toContain("const canStopCurrentWork = currentTurnActive || Boolean(state.promptActivity)");
+    expect(sidepanelSource).toContain("const canStopCurrentWork = currentWorkActive");
     expect(sidepanelSource).toContain('type: "prompt.cancel"');
     expect(sidepanelSource).toContain("cancelledPromptRequestIds.add");
     expect(backgroundSource).toContain('case "prompt.cancel"');

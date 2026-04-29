@@ -10,6 +10,12 @@ describe("turn steer sidepanel wiring", () => {
     expect(sidepanelSource).toContain('type: sendAsTurnSteer ? "turn.steer" : "prompt.send"');
   });
 
+  test("only direct composer text can become a steer request during active work", () => {
+    expect(sidepanelSource).toContain("const isDirectComposerTextSend =");
+    expect(sidepanelSource).toContain('source: isDirectComposerTextSend ? "composer" : "programmatic"');
+    expect(sidepanelSource).toContain("canSendCurrentComposerMessage(message, { allowSteer: isDirectComposerTextSend })");
+  });
+
   test("preserves the active turn after a steer response is accepted", () => {
     expect(sidepanelSource).toContain('from "./active-turn-after-send.js"');
     expect(sidepanelSource).toContain("const acceptedActiveTurn = resolveAcceptedPromptActiveTurn({");

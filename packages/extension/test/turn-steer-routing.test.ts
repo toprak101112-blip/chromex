@@ -10,8 +10,36 @@ describe("turn steer routing", () => {
         resetThread: false,
         threadId: "thread-1",
         activeTurn: { threadId: "thread-1", turnId: "turn-1" },
+        currentWorkActive: true,
+        source: "composer",
       }),
     ).toBe(true);
+  });
+
+  test("routes direct composer text into steering while current work is active before activeTurn reaches the sidepanel", () => {
+    expect(
+      shouldSendComposerAsTurnSteer({
+        draft: "playwright말고 체크 가능하지 않아?",
+        resetThread: false,
+        threadId: undefined,
+        activeTurn: null,
+        currentWorkActive: true,
+        source: "composer",
+      }),
+    ).toBe(true);
+  });
+
+  test("keeps programmatic prompts out of the steer path while work is active", () => {
+    expect(
+      shouldSendComposerAsTurnSteer({
+        draft: "현재 페이지를 요약해줘",
+        resetThread: false,
+        threadId: "thread-1",
+        activeTurn: { threadId: "thread-1", turnId: "turn-1" },
+        currentWorkActive: true,
+        source: "programmatic",
+      }),
+    ).toBe(false);
   });
 
   test("keeps empty drafts and reset sends out of the steer path", () => {
@@ -21,6 +49,8 @@ describe("turn steer routing", () => {
         resetThread: false,
         threadId: "thread-1",
         activeTurn: { threadId: "thread-1", turnId: "turn-1" },
+        currentWorkActive: true,
+        source: "composer",
       }),
     ).toBe(false);
     expect(
@@ -29,6 +59,8 @@ describe("turn steer routing", () => {
         resetThread: true,
         threadId: "thread-1",
         activeTurn: { threadId: "thread-1", turnId: "turn-1" },
+        currentWorkActive: true,
+        source: "composer",
       }),
     ).toBe(false);
   });
@@ -40,6 +72,8 @@ describe("turn steer routing", () => {
         resetThread: false,
         threadId: "thread-2",
         activeTurn: { threadId: "thread-1", turnId: "turn-1" },
+        currentWorkActive: true,
+        source: "composer",
       }),
     ).toBe(false);
   });

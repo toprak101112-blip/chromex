@@ -8,6 +8,8 @@ export type AppMenuLabels = {
   menu: string;
   chat: string;
   context: string;
+  skills: string;
+  pluginMcp: string;
   settingsHelp: string;
   recentChats: string;
   compactConversation: string;
@@ -102,6 +104,8 @@ export function getAppMenuLabels(locale: UiLocale): AppMenuLabels {
     menu: strings.appMenu.menu,
     chat: strings.tabs.chat,
     context: strings.tabs.context,
+    skills: strings.tabs.skills,
+    pluginMcp: strings.tabs.pluginMcp,
     settingsHelp: strings.appMenu.settingsHelp,
     recentChats: strings.labels.recentChats,
     compactConversation: strings.actions.compactConversation,

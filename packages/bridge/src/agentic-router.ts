@@ -245,6 +245,7 @@ export function createAgenticRoutePrompt(input: AgenticRouteInput): string {
             reason: "short reason",
           },
         ],
+        structuredInputIds: ["available app, plugin, or MCP structured input id to attach, or empty"],
         historyQuery: "concise browser-history search query, or empty string for recent/all relevant history",
         requiresVision: false,
         intent: {
@@ -293,6 +294,9 @@ export function createAgenticRoutePrompt(input: AgenticRouteInput): string {
     "- For browser page operation requests, decide the execution surface before deciding the automation mode. Use browserControl.surface=active-tab when the user wants the already visible/current browser page or tab changed. Use browserControl.surface=new-tab when the task is an independent browser harness workflow, test run, or explicitly separate Playwright browser/tab.",
     "- For active-tab operations such as clicking, focusing, filling a field, selecting an option, submitting a form, scrolling the current page, or moving the current tab to a user-requested URL/address, set intent.action=navigate, intent.target=current-page, browserControl.shouldControl=true, browserControl.surface=active-tab, browserControl.mode=dom, and request current-page with readStrategy=dom. Current extension executes safe current-page DOM actions directly through a constrained DOM action plan; do not describe the steps as a normal answer.",
     "- If semantic planning finds unresolved upstream work before a page action can be executed, set browserControl.shouldControl=false and encode that workflow state in browserControl.preconditions. Use external-research for information that must be gathered outside the active page, content-generation for text or artifacts that Codex must create before filling the page, context-collection for required source context not yet attached, and user-confirmation for approval gates.",
+    "- availableStructuredInputs are installed/enabled Codex app, plugin, or MCP mention inputs exposed by the local app-server. Use only their ids in structuredInputIds; never invent ids.",
+    "- When the task depends on a connected external service or tool such as mail, calendar, GitHub, documents, workspace data, or an authenticated MCP server, prefer the matching app, plugin, or MCP structured input over browser automation. Do not choose Playwright for connected-service data when a suitable structured input is available.",
+    "- If no suitable structured input is available, leave structuredInputIds empty and choose browser automation only when the user's target is a browser UI workflow rather than app-server tool data.",
     "- Do not treat the word Playwright by itself as a decision to ignore the visible tab. If the resolved target is the current visible page, choose active-tab. If the resolved target is a separate automation run, choose new-tab.",
     "- Simple same-tab URL/address changes do not require playwright. Use playwright with surface=new-tab only when browserAutomationCapabilities.playwright is true and the user intends a reliable multi-step web-browser workflow, testing flow, navigation sequence, or DOM-level automation that should be handled by a browser harness rather than a single current-page DOM action.",
     "- Use computer-use only when browserAutomationCapabilities.computer-use is true and the user intends visual-only, canvas-heavy, browser-chrome, native app, OS-level, or otherwise non-DOM control where a web DOM harness is not sufficient. Prefer dom for safe current-page web controls when available.",
@@ -340,6 +344,13 @@ export function createAgenticRoutePrompt(input: AgenticRouteInput): string {
         locale: input.locale ?? "",
         activeTab: input.activeTab ?? null,
         uploadedFiles: fileMetadata,
+        availableStructuredInputs: (input.availableStructuredInputs ?? []).map((structuredInput) => ({
+          id: structuredInput.id,
+          type: structuredInput.type,
+          name: structuredInput.name,
+          path: structuredInput.path,
+          description: structuredInput.description ?? "",
+        })),
         browserAutomationCapabilities: input.browserAutomationCapabilities ?? {
           dom: true,
           playwright: true,

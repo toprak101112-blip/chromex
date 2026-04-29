@@ -8,6 +8,33 @@ const IMAGE_WORKFLOW_PHASES = new Set<PromptActivityPhase>([
   "rendering-image-preview",
 ]);
 
+export function getEffectivePromptActivityForActiveWork(input: {
+  current: PromptActivityState | null;
+  activeTurn: CodexActiveTurn | null;
+  streamingAssistantMessageIds?: ReadonlySet<string> | undefined;
+}): PromptActivityState | null {
+  if (input.current) {
+    return input.current;
+  }
+
+  if (input.activeTurn?.turnId) {
+    return {
+      clientRequestId: `turn:${input.activeTurn.turnId}`,
+      phase: "responding",
+    };
+  }
+
+  const streamingMessageId = input.streamingAssistantMessageIds?.values().next().value;
+  if (streamingMessageId) {
+    return {
+      clientRequestId: `stream:${streamingMessageId}`,
+      phase: "responding",
+    };
+  }
+
+  return null;
+}
+
 export function promotePromptActivityForAssistantProgress(input: {
   current: PromptActivityState | null;
   activeTurn: CodexActiveTurn | null;

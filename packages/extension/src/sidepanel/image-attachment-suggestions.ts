@@ -1,6 +1,7 @@
 import type { ActionCard, UserFileAttachment } from "@codex-sidepanel/shared";
 
 import { getTranslatedUiLocale, SUPPORTED_UI_LANGUAGE_OPTIONS } from "../ui-language.js";
+import { createAdaptiveImagePromptExtractionPrompt } from "./image-prompt-extraction-prompt.js";
 import { getUiStrings, type UiLocale } from "./i18n.js";
 
 export const IMAGE_ATTACHMENT_PROMPT_EXTRACT_ACTION_ID = "image-attachment-prompt-extract";
@@ -27,7 +28,13 @@ export function createImageAttachmentSuggestionCards(input: ImageAttachmentSugge
       title: strings.actionCards[IMAGE_ATTACHMENT_PROMPT_EXTRACT_ACTION_ID],
       description: "",
       kind: "prompt",
-      prompt: strings.prompts.imageAttachmentPromptExtract(imageList, imageAttachments.length, outputLanguage),
+      prompt: createAdaptiveImagePromptExtractionPrompt({
+        source: "attachment",
+        imageList,
+        imageCount: imageAttachments.length,
+        outputLanguage,
+        locale: input.locale,
+      }),
     },
     {
       id: IMAGE_ATTACHMENT_DESCRIBE_ACTION_ID,

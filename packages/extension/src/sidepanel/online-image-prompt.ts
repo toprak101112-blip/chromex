@@ -1,4 +1,5 @@
 import { getTranslatedUiLocale, listSupportedUiLanguageOptions } from "../ui-language.js";
+import { createAdaptiveImagePromptExtractionPrompt } from "./image-prompt-extraction-prompt.js";
 import { getUiStrings } from "./i18n.js";
 
 export interface OnlineImagePromptExtractionInput {
@@ -20,7 +21,11 @@ export function createOnlineImagePromptExtractionPrompt(input: OnlineImagePrompt
   const context = contextLines.length
     ? `\n\n${strings.prompts.onlineImageContextLabel}:\n${contextLines.join("\n")}`
     : "";
-  return strings.prompts.onlineImagePromptExtract(responseLanguage) + context;
+  return createAdaptiveImagePromptExtractionPrompt({
+    source: "online",
+    outputLanguage: responseLanguage,
+    locale: input.responseLanguage,
+  }) + context;
 }
 
 function getPromptOutputLanguageName(locale: string | undefined): string {

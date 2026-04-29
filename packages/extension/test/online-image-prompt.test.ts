@@ -5,11 +5,9 @@ import { describe, expect, test } from "vitest";
 
 import { createOnlineImagePromptExtractionPrompt } from "../src/sidepanel/online-image-prompt.js";
 
-const readSource = (path: string) => readFileSync(resolve(process.cwd(), path), "utf8").replace(/\r\n/gu, "\n");
-
-const contentSource = readSource("src/content/index.ts");
-const backgroundSource = readSource("src/background/index.ts");
-const sidepanelSource = readSource("src/sidepanel/index.ts");
+const contentSource = readFileSync(resolve(process.cwd(), "src/content/index.ts"), "utf8");
+const backgroundSource = readFileSync(resolve(process.cwd(), "src/background/index.ts"), "utf8");
+const sidepanelSource = readFileSync(resolve(process.cwd(), "src/sidepanel/index.ts"), "utf8");
 const manifest = JSON.parse(readFileSync(resolve(process.cwd(), "public/manifest.json"), "utf8")) as {
   content_scripts?: Array<{
     matches?: string[];
@@ -41,8 +39,19 @@ describe("online image prompt extraction", () => {
 
     expect(prompt).toContain("첨부한 온라인 이미지를 분석");
     expect(prompt).toContain("이미지 생성 프롬프트");
-    expect(prompt).toContain("응답은 한국어로");
+    expect(prompt).toContain("한국어로 답해줘");
     expect(prompt).toContain("코드블럭");
+    expect(prompt).toContain("이미지 유형을 먼저 판별");
+    expect(prompt).toContain("목적/용도 → 핵심 브리프 → 필수 요소 → 맥락/환경 → 구도/공간 관계");
+    expect(prompt).toContain("사진이면 카메라/렌즈");
+    expect(prompt).toContain("UI/웹사이트/인포그래픽/포스터");
+    expect(prompt).toContain("변수성 텍스트");
+    expect(prompt).toContain("개인정보");
+    expect(prompt).toContain("데이터 값");
+    expect(prompt).toContain("고정 문구");
+    expect(prompt).toContain("텍스트 처리 방식");
+    expect(prompt).toContain("마스터피스, 8k, ultra detailed");
+    expect(prompt).toContain("관찰된 사실과 추정");
     expect(prompt).toContain("product launch poster");
     expect(prompt).toContain("Launch gallery");
     expect(prompt).toContain("https://example.com/gallery");
@@ -61,6 +70,16 @@ describe("online image prompt extraction", () => {
     expect(prompt).toContain("Reference context");
     expect(prompt).toContain("Image description/alt");
     expect(prompt).toContain("Answer in 日本語");
+    expect(prompt).toContain("Classify the image type first");
+    expect(prompt).toContain("intended use -> core brief -> required elements");
+    expect(prompt).toContain("For photographs, infer camera/lens");
+    expect(prompt).toContain("For UI, website, infographic, poster");
+    expect(prompt).toContain("variable text");
+    expect(prompt).toContain("personal data");
+    expect(prompt).toContain("data values");
+    expect(prompt).toContain("fixed copy");
+    expect(prompt).toContain("text treatment");
+    expect(prompt).toContain("masterpiece, 8k, ultra detailed");
     expect(prompt).not.toContain("첨부한 온라인 이미지를 분석");
     expect(prompt).not.toContain("참고 맥락");
   });

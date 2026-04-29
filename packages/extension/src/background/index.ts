@@ -2,11 +2,13 @@ import {
   DEFAULT_HARNESS_PERMISSIONS,
   type CodexActiveTurn,
   type CodexAppOption,
+  type CodexMcpServerOption,
   type CodexModelOption,
   type CodexModelReroute,
   type CodexPluginOption,
   type CodexRateLimits,
   type CodexSkillOption,
+  type CodexStructuredInput,
   type CodexThreadSummary,
   type CodexThreadTranscript,
   type CodexTurnDiff,
@@ -80,6 +82,7 @@ import {
   updateStoredSettings,
   deleteSkill,
 } from "./storage.js";
+import { resolveVisibleCurrentConversation } from "./conversation-history.js";
 import { NativeBridgeClient } from "./native-bridge-client.js";
 import { assertApiKeyLoginExplicitlyConfirmed } from "./api-key-login-guard.js";
 import { createUserProfileTemplate, updateUserProfileTemplate } from "../profile-templates.js";
@@ -146,6 +149,13 @@ import type {
 import type { SkillOption } from "../sidepanel/skills.js";
 import type { PromptActivityPhase } from "../sidepanel/prompt-activity.js";
 import { mergeStructuredInputsWithEnabledCodexSkills } from "../codex-skill-settings.js";
+import { requiresPluginCompanionAppConnection } from "../plugin-connection-availability.js";
+import {
+  createAvailableRouteStructuredInputs,
+  expandPluginStructuredInputsWithConnectedApps,
+  mergeExplicitAndRouteStructuredInputs,
+  resolveRouteStructuredInputs,
+} from "./route-structured-inputs.js";
 import { isRecoverableMissingCodexThreadError, shouldAutoCompactConversation } from "./auto-compact.js";
 import { resolveBridgeEventConversationId } from "./bridge-event-routing.js";
 import { ConversationRuntimeRegistry } from "./conversation-runtime.js";
@@ -210,6 +220,7 @@ const state = {
   selectedServiceTier: "",
   threadId: undefined as string | undefined,
   currentConversationId: undefined as string | undefined,
+  currentDraftConversation: null as SavedConversation | null,
   browserWindowId: undefined as number | undefined,
   models: [] as CodexModelOption[],
   customProfiles: [] as ProfileTemplate[],
@@ -219,6 +230,7 @@ const state = {
   appServerSkills: [] as CodexSkillOption[],
   connectedApps: [] as CodexAppOption[],
   appServerPlugins: [] as CodexPluginOption[],
+  mcpServers: [] as CodexMcpServerOption[],
   serverThreads: [] as CodexThreadSummary[],
   rateLimits: null as CodexRateLimits | null,
   activeTurn: null as CodexActiveTurn | null,
@@ -416,7 +428,7 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
 
       switch (message.type) {
         case "ui.init":
-          sendResponse(await buildUiInitPayload(message.windowId));
+          sendResponse(await buildUiInitPayload(message.windowId, { forceCatalog: Boolean(message.forceCatalog) }));
           return;
         case "ui.popout":
           sendResponse(await popOutChat());
@@ -581,6 +593,31 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
           sendResponse({
             skills: mergeSkillOptions(await deleteSkill(message.skillId), await getWorkspaceHarness()),
           });
+          return;
+        case "mcp.servers.list": {
+          const mcpServers = await bridge.request<CodexMcpServerOption[]>("mcp.servers.list", {
+            detail: message.detail === "full" ? "full" : "toolsAndAuthOnly",
+            limit: Number.isFinite(message.limit) ? Number(message.limit) : 100,
+          });
+          state.mcpServers = mcpServers;
+          sendResponse({ mcpServers });
+          return;
+        }
+        case "mcp.oauth.login.start":
+          sendResponse(
+            await bridge.request("mcp.oauth.login.start", {
+              name: String(message.name ?? ""),
+              scopes: Array.isArray(message.scopes) ? message.scopes.map(String) : undefined,
+              timeoutSecs: Number.isFinite(message.timeoutSecs) ? Number(message.timeoutSecs) : undefined,
+            }),
+          );
+          return;
+        case "mcp.servers.reload":
+          sendResponse(await bridge.request("mcp.servers.reload"));
+          void triggerCatalogRefresh(undefined, { force: true });
+          return;
+        case "app.install.open":
+          sendResponse(await openAppInstallUrl(String(message.url ?? "")));
           return;
         case "account.login.start":
           sendResponse(await handleAccountLogin(message.loginType, message.apiKey, Boolean(message.confirmed)));
@@ -830,6 +867,8 @@ async function ensurePromptConversationRuntime(payload: PromptRequestPayload) {
     const conversation = await createConversation(payload.profileId, payload.model ?? state.selectedModel);
     conversationId = conversation.id;
     state.currentConversationId = conversation.id;
+    state.currentDraftConversation = conversation;
+    await setCurrentConversationId(conversation.id);
   }
 
   await seedConversationRuntime(conversationId);
@@ -908,7 +947,10 @@ async function ensureStateLoaded(): Promise<void> {
   await state.initializationPromise;
 }
 
-async function buildUiInitPayload(windowId?: number): Promise<UiInitPayload> {
+async function buildUiInitPayload(
+  windowId?: number,
+  options: { forceCatalog?: boolean } = {},
+): Promise<UiInitPayload> {
   if (typeof windowId === "number") {
     state.browserWindowId = windowId;
   }
@@ -956,7 +998,7 @@ async function buildUiInitPayload(windowId?: number): Promise<UiInitPayload> {
 
   await softTimeout(
     triggerCatalogRefresh(workspaceHarness.workspaceRoot || undefined, {
-      force: state.modelCatalogState !== "ready" || state.models.length === 0,
+      force: options.forceCatalog || state.modelCatalogState !== "ready" || state.models.length === 0,
     }),
     UI_BRIDGE_TIMEOUT_MS,
     undefined,
@@ -966,14 +1008,18 @@ async function buildUiInitPayload(windowId?: number): Promise<UiInitPayload> {
   const activeTab = await getActiveTab().catch(() => null);
   const currentPageSupport = getCurrentPageSupport(activeTab?.url);
 
-  const [customProfiles, deletedProfileIds, currentContext, currentConversation] = await Promise.all([
+  const [customProfiles, deletedProfileIds, currentContext] = await Promise.all([
     listCustomProfiles(),
     listDeletedProfileIds(),
     currentPageSupport.available
       ? softTimeout(collectCurrentPageContext("auto"), UI_CONTEXT_TIMEOUT_MS, null, "context.collect")
       : Promise.resolve(null),
-    getCurrentConversation(),
   ]);
+  const currentConversation = resolveVisibleCurrentConversation({
+    conversations,
+    currentConversationId: state.currentConversationId,
+    draftConversation: state.currentDraftConversation,
+  });
 
   state.customProfiles = customProfiles;
   state.deletedProfileIds = deletedProfileIds;
@@ -1013,6 +1059,7 @@ async function buildUiInitPayload(windowId?: number): Promise<UiInitPayload> {
     appServerSkills: state.appServerSkills,
     connectedApps: state.connectedApps,
     appServerPlugins: state.appServerPlugins,
+    mcpServers: state.mcpServers,
     recentChats: conversations.map(toConversationSummary),
     serverThreads: state.serverThreads,
     currentConversation,
@@ -1047,6 +1094,24 @@ async function handleAccountLogin(
     await chrome.tabs.create({ url: result.authUrl });
   }
   return result;
+}
+
+async function openAppInstallUrl(url: string): Promise<{ ok: true }> {
+  const parsed = parseExternalInstallUrl(url);
+  if (!parsed) {
+    throw new Error(getUiStrings(await getActiveUiLocale()).errors.invalidAppConnectionUrl);
+  }
+  await chrome.tabs.create({ url: parsed.toString() });
+  return { ok: true };
+}
+
+function parseExternalInstallUrl(value: string): URL | null {
+  try {
+    const parsed = new URL(value.trim());
+    return parsed.protocol === "https:" || parsed.protocol === "http:" ? parsed : null;
+  } catch {
+    return null;
+  }
 }
 
 async function handlePromptRoutePreview(payload: PromptRequestPayload): Promise<{ plan: AgenticRoutePlan }> {
@@ -1179,10 +1244,11 @@ async function handlePromptSend(payload: PromptRequestPayload) {
     syncCurrentRuntimeState(conversationId);
   }
   const structuredInputs = mergeStructuredInputsWithEnabledCodexSkills(
-    payload.structuredInputs ?? [],
+    prepared.structuredInputs,
     state.appServerSkills,
     settings.enabledCodexSkillIds,
     createCodexSkillRuntimeAvailability(settings),
+    state.connectedApps,
   );
   const promptTurn = await requestPromptSendWithAssistantCapture({
     clientRequestId: payload.clientRequestId,
@@ -1276,7 +1342,10 @@ async function handleTurnSteer(payload: PromptRequestPayload) {
   const conversationId = runtime.conversationId;
   payload.conversationId = conversationId;
   if (!runtime.threadId || !runtime.activeTurn?.turnId) {
-    return handlePromptSend(payload);
+    return {
+      error: "No active turn to steer.",
+      currentConversationId: conversationId,
+    };
   }
 
   emitPromptStatus(payload, "routing");
@@ -1301,69 +1370,15 @@ async function handleTurnSteer(payload: PromptRequestPayload) {
   if (cancellationAfterBuild) {
     return cancellationAfterBuild;
   }
-  const imageWorkflow = await maybeHandleAgenticImageWorkflow(
-    payload,
-    prepared.agenticRoutePlan,
-    (phase, workflow) => emitPromptStatus(payload, phase, workflow),
-  );
-  if (imageWorkflow.kind === "blocked") {
-    return imageWorkflow.response;
-  }
-  if (imageWorkflow.kind === "handled") {
-    return {
-      ...imageWorkflow.response,
-      actionCards: prepared.actionCards,
-      currentConversationId: conversationId,
-    };
-  }
-  const imageGenerationWorkflow = await maybeHandleAgenticImageGenerationWorkflow(
-    payload,
-    prepared.agenticRoutePlan,
-    prepared.contexts,
-    prepared.fileAttachments,
-    (phase, workflow) => emitPromptStatus(payload, phase, workflow),
-  );
-  if (imageGenerationWorkflow.kind === "blocked") {
-    return imageGenerationWorkflow.response;
-  }
-  if (imageGenerationWorkflow.kind === "handled") {
-    return {
-      ...imageGenerationWorkflow.response,
-      actionCards: prepared.actionCards,
-      currentConversationId: conversationId,
-    };
-  }
-  const cancellationAfterImageWorkflow = await getPromptCancellationResponse(payload);
-  if (cancellationAfterImageWorkflow) {
-    return cancellationAfterImageWorkflow;
-  }
-  const browserActionWorkflow = await maybeHandleBrowserDomActionWorkflow(
-    payload,
-    prepared.agenticRoutePlan,
-    (phase, workflow) => emitPromptStatus(payload, phase, workflow),
-  );
-  if (browserActionWorkflow.kind === "blocked") {
-    return browserActionWorkflow.response;
-  }
-  if (browserActionWorkflow.kind === "handled") {
-    return {
-      ...browserActionWorkflow.response,
-      actionCards: prepared.actionCards,
-      currentConversationId: conversationId,
-    };
-  }
-  const cancellationAfterBrowserWorkflow = await getPromptCancellationResponse(payload);
-  if (cancellationAfterBrowserWorkflow) {
-    return cancellationAfterBrowserWorkflow;
-  }
   let result: { threadId: string; turnId: string };
   try {
     emitPromptStatus(payload, "waiting-for-codex");
     const structuredInputs = mergeStructuredInputsWithEnabledCodexSkills(
-      payload.structuredInputs ?? [],
+      prepared.structuredInputs,
       state.appServerSkills,
       settings.enabledCodexSkillIds,
       createCodexSkillRuntimeAvailability(settings),
+      state.connectedApps,
     );
     const cancellationBeforeSteer = await getPromptCancellationResponse(payload);
     if (cancellationBeforeSteer) {
@@ -1394,7 +1409,10 @@ async function handleTurnSteer(payload: PromptRequestPayload) {
     }
     conversationRuntime.setActiveTurn(conversationId, null);
     syncCurrentRuntimeState(conversationId);
-    return handlePromptSend(payload);
+    return {
+      error: toErrorMessage(error) || "No active turn to steer.",
+      currentConversationId: conversationId,
+    };
   }
   conversationRuntime.setActiveTurn(conversationId, {
     threadId: result.threadId,
@@ -1472,6 +1490,7 @@ async function buildPromptRequest(
   actionCards: ActionCard[];
   selectedModel: string;
   fileAttachments: UserFileAttachment[];
+  structuredInputs: CodexStructuredInput[];
   routePlan: PromptRoutingPlan;
   agenticRoutePlan: AgenticRoutePlan;
 } | {
@@ -1480,11 +1499,47 @@ async function buildPromptRequest(
     error: string;
     requiresConfirmation?: boolean;
     confirmationOperation?: HarnessPermissionOperation;
+    appConnection?: {
+      kind: "plugin";
+      id: string;
+    };
   };
 }> {
   const activeTab = await getActiveTab().catch(() => null);
   const routeInput = createAgenticRouteInput(payload, activeTab, settings);
   const agenticRoutePlan = await planAgenticRouteForPayload(payload, routeInput);
+  let structuredInputs = expandPluginStructuredInputsWithConnectedApps(
+    mergeExplicitAndRouteStructuredInputs(
+      payload.structuredInputs ?? [],
+      resolveRouteStructuredInputs(agenticRoutePlan, routeInput),
+    ),
+    state.connectedApps,
+  );
+  let blockedPluginInput = structuredInputs.find((input) =>
+    requiresPluginCompanionAppConnection(input, state.connectedApps),
+  );
+  if (blockedPluginInput) {
+    await triggerCatalogRefresh(undefined, { force: true }).catch((error) => {
+      console.warn("catalog refresh before plugin connection check failed", error);
+    });
+    structuredInputs = expandPluginStructuredInputsWithConnectedApps(structuredInputs, state.connectedApps);
+    blockedPluginInput = structuredInputs.find((input) =>
+      requiresPluginCompanionAppConnection(input, state.connectedApps),
+    );
+  }
+  if (blockedPluginInput) {
+    const strings = getUiStrings(resolveSettingsUiLocale(settings));
+    return {
+      ok: false,
+      response: {
+        error: strings.errors.appConnectionRequired(blockedPluginInput.name),
+        appConnection: {
+          kind: "plugin",
+          id: blockedPluginInput.id,
+        },
+      },
+    };
+  }
   const routePlan = routePlanToPromptRoutingPlan(agenticRoutePlan, routeInput);
   const currentPageSupport = getCurrentPageSupport(activeTab?.url);
   const requestedContextRequests = payload.suppressPageContext
@@ -1605,6 +1660,7 @@ async function buildPromptRequest(
     actionCards,
     selectedModel: routePlan.selectedModel,
     fileAttachments,
+    structuredInputs,
     routePlan: effectiveRoutePlan,
     agenticRoutePlan,
   };
@@ -1624,6 +1680,7 @@ async function planAgenticRouteForPayload(
       selectedProfileId: normalized.selectedProfileId,
       selectedModel: normalized.selectedModel,
       contextSources: normalized.contextRequests.map((request) => request.source),
+      structuredInputIds: normalized.structuredInputIds,
       historyQuery: normalized.historyQuery,
       imageEdit: normalized.imageEdit,
     });
@@ -1657,6 +1714,11 @@ function createAgenticRouteInput(
     ...(payload.selectedTabIds?.length ? { selectedTabIds: payload.selectedTabIds } : {}),
     ...(payload.historyQuery ? { historyQuery: payload.historyQuery } : {}),
     locale: resolveSettingsUiLocale(settings),
+    availableStructuredInputs: createAvailableRouteStructuredInputs({
+      apps: state.connectedApps,
+      plugins: state.appServerPlugins,
+      mcpServers: state.mcpServers,
+    }),
     browserAutomationCapabilities: {
       dom: true,
       playwright: state.playwrightRuntime.available && settings.playwrightBrowserControlEnabled,
@@ -3389,14 +3451,17 @@ function estimateBase64ByteLength(base64: string): number {
   return Math.max(0, Math.floor((clean.length * 3) / 4) - padding);
 }
 
-async function refreshAppServerCatalog(workspaceRoot?: string): Promise<void> {
+async function refreshAppServerCatalog(
+  workspaceRoot?: string,
+  options: { force?: boolean } = {},
+): Promise<void> {
   state.modelCatalogState = "loading";
   state.modelCatalogErrorMessage = "";
   const normalizedWorkspaceRoot = normalizeCatalogWorkspaceRoot(workspaceRoot ?? (await getWorkspaceHarness()).workspaceRoot);
   const cwd = normalizedWorkspaceRoot || undefined;
   let modelRequestFailed = false;
   let modelRequestErrorMessage = "";
-  const [models, serverThreads, appServerSkills, connectedApps, appServerPlugins, rateLimits] = await Promise.all([
+  const [models, serverThreads, appServerSkills, connectedApps, appServerPlugins, mcpServers, rateLimits] = await Promise.all([
     bridge.request<CodexModelOption[]>("model.list").catch((error) => {
       modelRequestFailed = true;
       modelRequestErrorMessage = toErrorMessage(error);
@@ -3411,9 +3476,15 @@ async function refreshAppServerCatalog(workspaceRoot?: string): Promise<void> {
       ...(cwd ? { cwd } : {}),
       forceReload: true,
     }).catch(() => []),
-    bridge.request<CodexAppOption[]>("apps.list", state.threadId ? { threadId: state.threadId } : {}).catch(() => []),
+    bridge.request<CodexAppOption[]>("apps.list", {
+      ...(options.force ? { forceRefetch: true } : {}),
+    }).catch(() => []),
     bridge.request<CodexPluginOption[]>("plugins.list", {
       ...(cwd ? { cwd } : {}),
+    }).catch(() => []),
+    bridge.request<CodexMcpServerOption[]>("mcp.servers.list", {
+      detail: "toolsAndAuthOnly",
+      limit: 100,
     }).catch(() => []),
     bridge.request<CodexRateLimits | null>("account.rate_limits.read").catch(() => null),
   ]);
@@ -3423,6 +3494,7 @@ async function refreshAppServerCatalog(workspaceRoot?: string): Promise<void> {
   state.appServerSkills = appServerSkills;
   state.connectedApps = connectedApps;
   state.appServerPlugins = appServerPlugins;
+  state.mcpServers = mcpServers;
   state.rateLimits = rateLimits;
   state.modelCatalogState = resolveCatalogModelState({
     modelRequestFailed,
@@ -3525,7 +3597,7 @@ function triggerCatalogRefresh(
   }
 
   state.lastRequestedCatalogWorkspaceRoot = normalizeCatalogWorkspaceRoot(workspaceRoot);
-  state.catalogRefreshPromise = refreshAppServerCatalog(workspaceRoot)
+  state.catalogRefreshPromise = refreshAppServerCatalog(workspaceRoot, options.force ? { force: true } : {})
     .catch((error) => {
       state.modelCatalogState = "error";
       state.modelCatalogErrorMessage = toErrorMessage(error);
@@ -3554,8 +3626,10 @@ async function startNewConversation(profileId?: string, model?: string) {
   const conversation = await createConversation(nextProfileId, nextModel);
   conversationRuntime.resetConversation(conversation.id);
   state.currentConversationId = conversation.id;
+  state.currentDraftConversation = conversation;
   state.selectedProfileId = nextProfileId;
   state.selectedModel = nextModel;
+  await setCurrentConversationId(conversation.id);
   await setSelectedProfileId(nextProfileId);
   await setSelectedModel(nextModel);
   return { conversation };
@@ -3584,6 +3658,7 @@ async function resumeServerConversation(threadId: string) {
     updatedAt: transcript.updatedAt,
   });
   state.currentConversationId = conversation.id;
+  state.currentDraftConversation = null;
   conversationRuntime.setThreadId(conversation.id, threadId);
   conversationRuntime.setActiveTurn(conversation.id, null);
   syncCurrentRuntimeState(conversation.id);
@@ -3599,6 +3674,7 @@ async function resumeConversation(conversationId: string) {
   }
 
   state.currentConversationId = conversation.id;
+  state.currentDraftConversation = null;
   conversationRuntime.setThreadId(conversation.id, conversation.threadId);
   state.latestPlan = null;
   state.latestDiff = null;
@@ -3623,6 +3699,9 @@ async function resumeConversation(conversationId: string) {
 
 async function persistConversation(conversation: SavedConversation) {
   const saved = await saveConversation(conversation);
+  if (state.currentDraftConversation?.id === saved.id) {
+    state.currentDraftConversation = null;
+  }
   conversationRuntime.setThreadId(saved.id, saved.threadId);
   if (!state.currentConversationId || state.currentConversationId === saved.id) {
     state.currentConversationId = saved.id;
@@ -3640,7 +3719,14 @@ async function handleConversationDelete(conversationId: string) {
   const wasCurrent = state.currentConversationId === conversationId;
   const conversations = await deleteConversation(conversationId);
   conversationRuntime.deleteConversation(conversationId);
-  const currentConversation = await getCurrentConversation();
+  if (state.currentDraftConversation?.id === conversationId) {
+    state.currentDraftConversation = null;
+  }
+  const currentConversation = resolveVisibleCurrentConversation({
+    conversations,
+    currentConversationId: state.currentConversationId,
+    draftConversation: state.currentDraftConversation,
+  });
   state.currentConversationId = currentConversation?.id ?? "";
   if (currentConversation) {
     conversationRuntime.setThreadId(currentConversation.id, currentConversation.threadId);
@@ -3666,6 +3752,7 @@ async function handleConversationClear() {
   await clearConversations();
   conversationRuntime.clear();
   state.currentConversationId = "";
+  state.currentDraftConversation = null;
   state.threadId = undefined;
   state.activeTurn = null;
   state.latestPlan = null;

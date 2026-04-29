@@ -3,7 +3,10 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 
 import {
+  type CodexAppOption,
+  type CodexStructuredInput,
   fitTextToTokenBudget,
+  type CodexMcpServerOption,
   normalizeCodexRealtimeVoice,
   type PageContextEnvelope,
   type ProfileTemplate,
@@ -13,6 +16,7 @@ import {
 
 import {
   mapApps,
+  mapMcpServerStatusResponse,
   mapModels,
   mapPlugins,
   mapRateLimits,
@@ -84,7 +88,7 @@ type ContextCompactionItem = {
 };
 
 type AccountReadResult = {
-  account?: { type?: string; planType?: string | null } | null;
+  account?: { type?: string; email?: string | null; planType?: string | null } | null;
   requiresOpenaiAuth?: boolean;
 };
 
@@ -133,6 +137,11 @@ function getCodexAccountPlanType(result: AccountReadResult): string | null {
   }
   const planType = result.account.planType ?? null;
   return typeof planType === "string" && planType.trim() ? planType.trim().toLowerCase() : null;
+}
+
+function getCodexAccountEmail(result: AccountReadResult): string | null {
+  const email = result.account?.email;
+  return typeof email === "string" && email.trim() ? email.trim() : null;
 }
 
 function isFreeCodexAccount(result: AccountReadResult): boolean {
@@ -576,6 +585,108 @@ function delay(delayMs: number): Promise<void> {
   return new Promise((resolve) => setTimeout(resolve, delayMs));
 }
 
+function expandPluginStructuredInputsWithConnectedApps(
+  inputs: CodexStructuredInput[] | undefined,
+  apps: CodexAppOption[],
+): CodexStructuredInput[] | undefined {
+  const sourceInputs = inputs ?? [];
+  const usableApps = apps.filter((app) => app.isAccessible && app.isEnabled);
+  if (sourceInputs.length === 0 || usableApps.length === 0 || !sourceInputs.some(isPluginStructuredInput)) {
+    return inputs;
+  }
+
+  const expanded: CodexStructuredInput[] = [];
+  const seenIds = new Set<string>();
+  const seenPaths = new Set<string>();
+  const append = (input: CodexStructuredInput): void => {
+    if (!input.id.trim() || seenIds.has(input.id) || seenPaths.has(input.path)) {
+      return;
+    }
+    expanded.push(input);
+    seenIds.add(input.id);
+    seenPaths.add(input.path);
+  };
+
+  for (const input of sourceInputs) {
+    const app = isPluginStructuredInput(input) ? findConnectedAppForPluginMention(input, usableApps) : null;
+    if (app) {
+      append({
+        id: app.id,
+        type: "mention",
+        name: app.name,
+        path: app.path,
+        description: app.description,
+        token: app.token,
+      });
+    }
+    append(input);
+  }
+
+  return expanded;
+}
+
+function createTurnApprovalParamsForStructuredInputs(
+  inputs: PromptSendParams["structuredInputs"],
+): { approvalPolicy: "never" | "on-request"; approvalsReviewer?: "auto_review" } {
+  if (!hasExplicitExternalToolMention(inputs)) {
+    return { approvalPolicy: "never" };
+  }
+
+  return {
+    approvalPolicy: "on-request",
+    approvalsReviewer: "auto_review",
+  };
+}
+
+function hasExplicitExternalToolMention(inputs: PromptSendParams["structuredInputs"]): boolean {
+  return (
+    inputs?.some(
+      (input) => input.type === "mention" && /^(?:app|plugin|mcp):\/\//iu.test(input.path.trim()),
+    ) ?? false
+  );
+}
+
+function isPluginStructuredInput(input: CodexStructuredInput): input is CodexStructuredInput & { type: "mention" } {
+  return input.type === "mention" && /^plugin:\/\//iu.test(input.path.trim());
+}
+
+function findConnectedAppForPluginMention(
+  input: CodexStructuredInput & { type: "mention" },
+  apps: CodexAppOption[],
+): CodexAppOption | null {
+  const pluginSlug = pluginSlugFromPath(input.path);
+  const pluginTokens = new Set(
+    [input.id, input.name, input.token, pluginSlug]
+      .map(normalizeStructuredInputMatchValue)
+      .filter(Boolean),
+  );
+  return (
+    apps.find((app) =>
+      [app.id, app.name, app.token, app.path]
+        .map(normalizeStructuredInputMatchValue)
+        .some((value) => value && pluginTokens.has(value)),
+    ) ?? null
+  );
+}
+
+function pluginSlugFromPath(path: string): string {
+  return /^plugin:\/\/([^@/?#\s]+)/iu.exec(path.trim())?.[1] ?? "";
+}
+
+function normalizeStructuredInputMatchValue(value: string): string {
+  return (
+    value
+      .trim()
+      .replace(/^\$/u, "")
+      .replace(/^app:\/\//iu, "")
+      .replace(/^plugin:\/\//iu, "")
+      .split("@")[0]
+      ?.trim()
+      .replace(/[\s_-]+/gu, "")
+      .toLowerCase() ?? ""
+  );
+}
+
 export class AppServerCodexPlane implements BridgeCodexPlane {
   readonly #client: CodexAppServerClient;
   readonly #harness: BridgeHarnessRuntime;
@@ -587,6 +698,7 @@ export class AppServerCodexPlane implements BridgeCodexPlane {
   readonly #retryDelayImpl: RetryDelayImpl;
   #threadId: string | undefined = undefined;
   #activeTurnId: string | null = null;
+  #runtimeFeatureEnablementPromise: Promise<void> | null = null;
 
   constructor(options: {
     client: CodexAppServerClient;
@@ -625,6 +737,7 @@ export class AppServerCodexPlane implements BridgeCodexPlane {
       codexAuthenticated: hasAuthenticatedCodexAccount(result),
       multimodalAvailable: hasAuthenticatedCodexAccount(result),
       openAiApiKeyConfigured: this.#secrets.hasOpenAiApiKey(),
+      email: getCodexAccountEmail(result),
       planType: getCodexAccountPlanType(result),
     };
   }
@@ -715,20 +828,91 @@ export class AppServerCodexPlane implements BridgeCodexPlane {
   }
 
   async listApps(params: { threadId?: string; forceRefetch?: boolean }) {
-    const result = (await this.#client.request("app/list", {
-      limit: 24,
-      ...(params.threadId ? { threadId: params.threadId } : {}),
-      ...(params.forceRefetch ? { forceRefetch: true } : {}),
-    })) as { data?: Array<Record<string, unknown>> };
-    return mapApps((result.data ?? []) as never);
+    await this.#ensureAppAndPluginRuntimeFeatures();
+    const apps: Array<Record<string, unknown>> = [];
+    let cursor: string | undefined;
+    do {
+      const result = (await this.#client.request("app/list", {
+        limit: 100,
+        ...(cursor ? { cursor } : {}),
+        ...(params.forceRefetch ? { forceRefetch: true } : {}),
+      })) as { data?: Array<Record<string, unknown>>; nextCursor?: string | null; next_cursor?: string | null };
+      apps.push(...(result.data ?? []));
+      cursor = result.nextCursor ?? result.next_cursor ?? undefined;
+    } while (cursor);
+    return mapApps(apps as never);
   }
 
   async listPlugins(params: { cwd?: string }) {
+    await this.#ensureAppAndPluginRuntimeFeatures();
     const cwd = await this.#resolveCwd(params.cwd);
     const result = (await this.#client.request("plugin/list", {
       ...(cwd ? { cwds: [cwd] } : {}),
     })) as Record<string, unknown>;
     return mapPlugins(result as never);
+  }
+
+  async listMcpServers(params: { cursor?: string; limit?: number; detail?: "full" | "toolsAndAuthOnly" } = {}) {
+    const servers: CodexMcpServerOption[] = [];
+    let cursor = params.cursor ?? null;
+
+    do {
+      const result = (await this.#client.request("mcpServerStatus/list", {
+        limit: params.limit ?? 100,
+        detail: params.detail ?? "toolsAndAuthOnly",
+        ...(cursor ? { cursor } : {}),
+      })) as Record<string, unknown>;
+      const page = mapMcpServerStatusResponse(result as never);
+      servers.push(...page.servers);
+      cursor = page.nextCursor;
+    } while (cursor);
+
+    return servers;
+  }
+
+  async startMcpOauthLogin(params: { name: string; scopes?: string[]; timeoutSecs?: number }) {
+    const result = (await this.#client.request("mcpServer/oauth/login", {
+      name: params.name,
+      ...(params.scopes?.length ? { scopes: params.scopes } : {}),
+      ...(params.timeoutSecs ? { timeoutSecs: params.timeoutSecs } : {}),
+    })) as { authorizationUrl?: string; authorization_url?: string };
+    return {
+      authorizationUrl: result.authorizationUrl ?? result.authorization_url ?? "",
+    };
+  }
+
+  async callMcpTool(params: {
+    threadId: string;
+    server: string;
+    tool: string;
+    arguments?: Record<string, unknown>;
+    _meta?: Record<string, unknown>;
+  }) {
+    const result = (await this.#client.request("mcpServer/tool/call", {
+      threadId: params.threadId,
+      server: params.server,
+      tool: params.tool,
+      ...(params.arguments ? { arguments: params.arguments } : {}),
+      ...(params._meta ? { _meta: params._meta } : {}),
+    })) as {
+      content?: unknown[];
+      structuredContent?: unknown;
+      structured_content?: unknown;
+      isError?: boolean;
+      is_error?: boolean;
+      _meta?: unknown;
+    };
+    return {
+      content: Array.isArray(result.content) ? result.content : [],
+      structuredContent: result.structuredContent ?? result.structured_content,
+      isError: Boolean(result.isError ?? result.is_error),
+      meta: result._meta,
+    };
+  }
+
+  async reloadMcpServers(): Promise<{ ok: true }> {
+    await this.#client.request("config/mcpServer/reload");
+    return { ok: true };
   }
 
   async readRateLimits() {
@@ -740,6 +924,7 @@ export class AppServerCodexPlane implements BridgeCodexPlane {
   }
 
   async openSession(params: SessionParams): Promise<{ threadId: string }> {
+    await this.#ensureAppAndPluginRuntimeFeatures();
     const cwd = await this.#resolveCwd(params.cwd);
     const result = (await this.#client.request("thread/start", {
       ...(cwd ? { cwd } : {}),
@@ -759,6 +944,7 @@ export class AppServerCodexPlane implements BridgeCodexPlane {
   }
 
   async resumeSession(params: { threadId: string }): Promise<{ threadId: string }> {
+    await this.#ensureAppAndPluginRuntimeFeatures();
     const cwd = await this.#resolveCwd();
     const result = (await this.#client.request("thread/resume", {
       threadId: params.threadId,
@@ -778,6 +964,7 @@ export class AppServerCodexPlane implements BridgeCodexPlane {
     params: PromptSendParams,
     emit: (event: BridgeEvent) => void,
   ): Promise<{ threadId: string; turnId: string }> {
+    await this.#ensureAppAndPluginRuntimeFeatures();
     const cwd = await this.#resolveCwd(params.cwd);
     const tempPaths: string[] = [];
     let threadId = params.threadId ?? this.#threadId ?? "";
@@ -890,7 +1077,7 @@ export class AppServerCodexPlane implements BridgeCodexPlane {
               ...(params.model ? { model: params.model } : {}),
               ...(params.serviceTier ? { serviceTier: params.serviceTier } : {}),
               ...(params.reasoningEffort ? { effort: params.reasoningEffort } : {}),
-              approvalPolicy: "never",
+              ...createTurnApprovalParamsForStructuredInputs(params.structuredInputs),
               personality: "pragmatic",
             },
           );
@@ -1264,6 +1451,7 @@ export class AppServerCodexPlane implements BridgeCodexPlane {
   }
 
   async steerTurn(params: PromptSendParams & { expectedTurnId: string }): Promise<{ threadId: string; turnId: string }> {
+    await this.#ensureAppAndPluginRuntimeFeatures();
     const cwd = await this.#resolveCwd(params.cwd);
     const threadId = params.threadId ?? this.#threadId;
     if (!threadId) {
@@ -1384,6 +1572,27 @@ export class AppServerCodexPlane implements BridgeCodexPlane {
       return;
     }
 
+    if (notification.method === "item/mcpToolCall/progress") {
+      const threadId = String(notification.params?.threadId ?? this.#threadId ?? "");
+      const turnId = String(notification.params?.turnId ?? this.#activeTurnId ?? "");
+      const itemId = String(notification.params?.itemId ?? "mcp-tool");
+      if (!threadId || !turnId) {
+        return;
+      }
+      this.#emitEvent?.({
+        type: "turn.activity",
+        threadId,
+        turnId,
+        itemId,
+        kind: "tool",
+        title: "Using MCP tool",
+        detail: summarizeString(String(notification.params?.message ?? "MCP tool progress")),
+        status: "running",
+        timestampMs: Date.now(),
+      });
+      return;
+    }
+
     if (notification.method === "thread/compacted") {
       const threadId = String(notification.params?.threadId ?? this.#threadId ?? "");
       const turnId = String(notification.params?.turnId ?? this.#activeTurnId ?? "");
@@ -1467,6 +1676,28 @@ export class AppServerCodexPlane implements BridgeCodexPlane {
         type: "catalog.updated",
         kind: "apps",
       });
+      return;
+    }
+
+    if (notification.method === "mcpServer/oauthLogin/completed") {
+      this.#emitEvent?.({
+        type: "mcp.oauth.login.completed",
+        serverName: String(notification.params?.name ?? ""),
+        success: Boolean(notification.params?.success),
+        error: notification.params?.error ? String(notification.params.error) : null,
+      });
+      this.#emitEvent?.({
+        type: "catalog.updated",
+        kind: "mcp",
+      });
+      return;
+    }
+
+    if (notification.method === "mcpServer/startupStatus/updated") {
+      this.#emitEvent?.({
+        type: "catalog.updated",
+        kind: "mcp",
+      });
     }
   }
 
@@ -1496,10 +1727,12 @@ export class AppServerCodexPlane implements BridgeCodexPlane {
       tempDir: await this.#tempDirPromise,
     });
     tempPaths.push(...contextPreparation.tempPaths);
+    const structuredInputs = await this.#expandStructuredInputsWithConnectedApps(params.structuredInputs);
 
     return createCodexTurnInputItems(
       {
         ...params,
+        ...(structuredInputs ? { structuredInputs } : {}),
         contexts: contextPreparation.contexts,
       },
       async (ref, contextIndex, assetIndex) => {
@@ -1514,6 +1747,20 @@ export class AppServerCodexPlane implements BridgeCodexPlane {
         uploadedImages: preparedFiles.uploadedImages,
       },
     );
+  }
+
+  async #expandStructuredInputsWithConnectedApps(
+    structuredInputs: PromptSendParams["structuredInputs"],
+  ): Promise<PromptSendParams["structuredInputs"]> {
+    if (!structuredInputs?.some((input) => input.type === "mention" && /^plugin:\/\//iu.test(input.path.trim()))) {
+      return structuredInputs;
+    }
+
+    const apps = await this.listApps({ forceRefetch: true }).catch((error) => {
+      void this.#record("structured_inputs.app_expansion_failed", { error: getErrorMessage(error) });
+      return [];
+    });
+    return expandPluginStructuredInputsWithConnectedApps(structuredInputs, apps);
   }
 
   async #materializeInlineImage(dataUrl: string, contextIndex: number, assetIndex: number): Promise<string> {
@@ -1534,6 +1781,27 @@ export class AppServerCodexPlane implements BridgeCodexPlane {
   async #resolveCwd(explicitCwd?: string): Promise<string | undefined> {
     const value = explicitCwd?.trim() ? explicitCwd.trim() : await this.#harness.getWorkspaceRoot();
     return value?.trim() ? value.trim() : undefined;
+  }
+
+  async #ensureAppAndPluginRuntimeFeatures(): Promise<void> {
+    if (!this.#runtimeFeatureEnablementPromise) {
+      this.#runtimeFeatureEnablementPromise = this.#client
+        .request("experimentalFeature/enablement/set", {
+          enablement: {
+            apps: true,
+            plugins: true,
+          },
+        })
+        .then(() => undefined)
+        .catch((error) => {
+          this.#runtimeFeatureEnablementPromise = null;
+          void this.#record("runtime_features.enablement_failed", {
+            features: ["apps", "plugins"],
+            error: getErrorMessage(error),
+          });
+        });
+    }
+    await this.#runtimeFeatureEnablementPromise;
   }
 
   async #record(event: string, details: Record<string, unknown>): Promise<void> {
@@ -2290,8 +2558,8 @@ export class CodexImagePlane implements BridgeImagePlane {
             "- If the generation request contains or references a user-provided prompt, execute that prompt as the visual brief. Do not rewrite it unless the user explicitly asks for prompt text instead of an image.",
             "- Do not invent metrics, quotes, dates, citations, charts, logos, or facts that are not present in the page context.",
             "- If exact numbers are unavailable, use qualitative callouts instead of fake numbers.",
-            "- Prioritize readable typography, concise section labels, clear hierarchy, high contrast, and generous whitespace.",
-            "- Keep in-image text crisp, correctly spelled, and legible on mobile.",
+            "- Prioritize readable typography, concise labels, clear hierarchy, high contrast, and generous whitespace.",
+            "- Keep in-image text crisp, correctly spelled, and easy to read.",
             "- For a normal single-image request, produce exactly one final image.",
             "- If the user explicitly asks for a slide deck or multiple slide images, generate the slide images sequentially in this same Codex turn, one image-generation tool call per slide, in slide order.",
             "- For slide decks or any ordered multi-image set, use reference chaining: before generating image 2 and every later image, inspect the previous generated image result, keep its saved local path or preview reference, and carry forward the exact previous image prompt summary.",
@@ -2641,7 +2909,7 @@ function createImageGeneratePreviewAlt(workflow: ImageGenerateParams["workflow"]
 
 function createImageGenerateWorkflowInstruction(workflow: ImageGenerateParams["workflow"]): string {
   if (workflow === "infographic") {
-    return "$imagegen Generate a new infographic image from the attached private page context.";
+    return "$imagegen Generate a new visual explainer image from the attached private page context.";
   }
   if (workflow === "slide-images") {
     return "$imagegen Generate ordered presentation slide images from the request and attached private context.";
@@ -2651,7 +2919,7 @@ function createImageGenerateWorkflowInstruction(workflow: ImageGenerateParams["w
 
 function createImageGenerateUseCase(workflow: ImageGenerateParams["workflow"]): string {
   if (workflow === "infographic") {
-    return "infographic";
+    return "current-page-visual-explainer";
   }
   if (workflow === "slide-images") {
     return "presentation-slide-images";

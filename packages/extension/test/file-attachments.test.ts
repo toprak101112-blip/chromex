@@ -233,4 +233,28 @@ describe("file attachment policy", () => {
     );
     expect(sendPromptSource).toContain("state.fileAttachments = submittedComposerFileAttachments");
   });
+
+  test("flushes the submitted user message before awaiting generated-image follow-up routing", () => {
+    const sendPromptSource = getFunctionSource(sidepanelSource, "sendPrompt");
+    const userMessagePushIndex = sendPromptSource.indexOf("state.messages.push({");
+    const generatedImageRoutingIndex = sendPromptSource.indexOf("await createGeneratedImageFileAttachmentsForPrompt");
+
+    expect(userMessagePushIndex).toBeGreaterThanOrEqual(0);
+    expect(generatedImageRoutingIndex).toBeGreaterThanOrEqual(0);
+    expect(userMessagePushIndex).toBeLessThan(generatedImageRoutingIndex);
+    const renderFlushIndex = sendPromptSource.indexOf("renderSync();", userMessagePushIndex);
+    expect(renderFlushIndex).toBeGreaterThanOrEqual(0);
+    expect(renderFlushIndex).toBeLessThan(generatedImageRoutingIndex);
+  });
+
+  test("skips generated-image follow-up routing for turn steering sends", () => {
+    const sendPromptSource = getFunctionSource(sidepanelSource, "sendPrompt");
+    const generatedImageRoutingIndex = sendPromptSource.indexOf("await createGeneratedImageFileAttachmentsForPrompt");
+
+    expect(generatedImageRoutingIndex).toBeGreaterThanOrEqual(0);
+    expect(sendPromptSource).toContain("const generatedImageAttachments = sendAsTurnSteer");
+    expect(sendPromptSource.indexOf("? []", sendPromptSource.indexOf("const generatedImageAttachments = sendAsTurnSteer"))).toBeLessThan(
+      generatedImageRoutingIndex,
+    );
+  });
 });
