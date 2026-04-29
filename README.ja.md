@@ -46,6 +46,8 @@ Published by **GenexisAI CHOI**.
 
 Release ZIP ファイルは GitHub Releases に添付されます。リポジトリのファイルツリーには直接コミットされません。直接ダウンロードリンクが開けない場合は、[latest release page](https://github.com/GENEXIS-AI/chromex/releases/latest) の **Assets** から `chromex-unpacked-extension.zip` をダウンロードしてください。
 
+拡張機能 ZIP がインストールするのは Chrome UI だけです。ローカルブリッジは、ソース checkout または `chromex-public-source.zip` から一度インストールする必要があります。
+
 開発者向けソースインストール:
 
 ```bash
@@ -61,6 +63,30 @@ node scripts/install-native-host.mjs
 ```text
 packages/extension/dist
 ```
+
+### Windows ローカルブリッジ設定
+
+Windows では Node.js 20 LTS 以降をインストールしたうえで、`chromex` ソースフォルダから **PowerShell** で実行します。
+
+```powershell
+npm install
+npm run build
+node scripts/install-native-host.mjs --browser=chrome
+```
+
+その後 `chrome://extensions` を開き、Chromex の **Reload** を押してから、Chromex サイドパネルで **Check connection** を押してください。
+
+それでもローカルブリッジ待機のままの場合:
+
+1. Chromex が release の `chromex-extension` フォルダ、または `packages/extension/dist` から読み込まれていることを確認します。
+2. `chrome://extensions` の Chromex カードに表示される extension ID をコピーします。
+3. その ID を指定してインストーラを再実行します。
+
+```powershell
+node scripts/install-native-host.mjs <extension-id> --browser=chrome
+```
+
+公開リリースで想定される ID は `menmlhahmendmkiicbjihgjhppkgaeom` です。Chrome に別の ID が表示される場合は、Chrome に表示された ID を使用してください。
 
 ## ランタイム境界
 
@@ -168,7 +194,7 @@ Chromex は `0.1.1` 以降、通常のオープンソースリリース履歴を
 
 ## トラブルシューティング
 
-- **Native host missing or forbidden**: `npm run build` を実行し、続けて `node scripts/install-native-host.mjs` を実行します。`chrome://extensions` で拡張機能を再読み込みし、Chromex のオンボーディングまたはシステム状態を確認してください。
+- **Native host missing or forbidden**: `npm run build` を実行し、続けて `node scripts/install-native-host.mjs --browser=chrome` を実行します。`chrome://extensions` で拡張機能を再読み込みし、Chromex のオンボーディングまたはシステム状態を確認してください。Chrome に別の extension ID が表示される場合は、`node scripts/install-native-host.mjs <extension-id> --browser=chrome` で再インストールしてください。
 - **モデル一覧が読み込まれない**: native bridge が接続されていることを確認し、app-server ベースのログインフローでサインインしてください。
 - **ページ文脈を利用できない**: 対象タブから Chromex を開くか、ワークフローが要求する Chrome サイト権限を許可してください。
 - **Chrome に古い UI が表示され続ける**: `npm run build` を実行し、拡張機能カードを再読み込みして、Chrome が `packages/extension/dist` を読み込んでいることを確認してください。

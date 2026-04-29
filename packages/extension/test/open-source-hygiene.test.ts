@@ -51,7 +51,12 @@ describe("open-source repository hygiene", () => {
       expect(publicReadme).toContain("releases/latest/download/chromex-unpacked-extension.zip");
       expect(publicReadme).toContain("README.ja.md");
       expect(publicReadme).toContain("README.zh-CN.md");
+      expect(publicReadme).toContain("install-native-host.mjs <extension-id> --browser=chrome");
+      expect(publicReadme).toContain("menmlhahmendmkiicbjihgjhppkgaeom");
     }
+    expect(publicReleaseScript).toContain("requireManifestKey: true");
+    expect(publicReleaseScript).toContain("must keep manifest.key");
+    expect(publicReleaseScript).not.toContain("delete manifest.key");
     expect(existsSync(resolve(repoRoot, "assets/chromex-hero.png"))).toBe(true);
     expect(readme).not.toContain(["What", "Is", "Not", "Published"].join(" "));
     expect(koreanReadme).not.toContain(["공개하지", "않는", "항목"].join(" "));

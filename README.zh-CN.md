@@ -46,6 +46,8 @@ Published by **GenexisAI CHOI**.
 
 Release ZIP 文件会附加在 GitHub Releases 中，不会直接提交到仓库文件树。如果直接下载链接无法打开，请进入 [latest release page](https://github.com/GENEXIS-AI/chromex/releases/latest)，在 **Assets** 中下载 `chromex-unpacked-extension.zip`。
 
+扩展 ZIP 只安装 Chrome UI。本地 bridge 还需要从源码 checkout 或 `chromex-public-source.zip` 中单独安装一次。
+
 开发者源码安装:
 
 ```bash
@@ -61,6 +63,30 @@ node scripts/install-native-host.mjs
 ```text
 packages/extension/dist
 ```
+
+### Windows 本地 Bridge 设置
+
+在 Windows 上，请先安装 Node.js 20 LTS 或更新版本，然后在 `chromex` 源码文件夹中用 **PowerShell** 运行:
+
+```powershell
+npm install
+npm run build
+node scripts/install-native-host.mjs --browser=chrome
+```
+
+然后打开 `chrome://extensions`，点击 Chromex 的 **Reload**，再在 Chromex 侧边栏中点击 **Check connection**。
+
+如果侧边栏仍显示正在等待本地 bridge:
+
+1. 确认 Chromex 是从 release 的 `chromex-extension` 文件夹或 `packages/extension/dist` 加载的。
+2. 复制 `chrome://extensions` 中 Chromex 卡片显示的 extension ID。
+3. 用该 ID 重新运行安装器。
+
+```powershell
+node scripts/install-native-host.mjs <extension-id> --browser=chrome
+```
+
+公开 release 的预期 ID 是 `menmlhahmendmkiicbjihgjhppkgaeom`。如果 Chrome 显示不同 ID，请使用 Chrome 中显示的 ID。
 
 ## 运行时边界
 
@@ -168,7 +194,7 @@ Chromex 从 `0.1.1` 开始使用普通开源发布历史。版本策略、pull r
 
 ## 故障排查
 
-- **Native host missing or forbidden**: 运行 `npm run build`，然后运行 `node scripts/install-native-host.mjs`，在 `chrome://extensions` 中重新加载扩展，并检查 Chromex onboarding/system status。
+- **Native host missing or forbidden**: 运行 `npm run build`，然后运行 `node scripts/install-native-host.mjs --browser=chrome`，在 `chrome://extensions` 中重新加载扩展，并检查 Chromex onboarding/system status。如果 Chrome 显示不同 extension ID，请运行 `node scripts/install-native-host.mjs <extension-id> --browser=chrome` 重新安装。
 - **模型列表无法加载**: 确认 native bridge 已连接，然后通过 app-server-backed 登录流程登录。
 - **页面上下文不可用**: 从目标标签页打开 Chromex，或批准工作流请求的 Chrome 站点权限。
 - **Chrome 仍显示旧 UI**: 运行 `npm run build`，重新加载扩展卡片，并确认 Chrome 正在加载 `packages/extension/dist`。

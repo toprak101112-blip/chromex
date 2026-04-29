@@ -46,6 +46,8 @@ Fastest path for users:
 
 Release ZIP files are attached to GitHub Releases. They are not committed into the repository file tree. If the direct download link does not open, use the [latest release page](https://github.com/GENEXIS-AI/chromex/releases/latest) and download `chromex-unpacked-extension.zip` from **Assets**.
 
+The extension ZIP only installs the Chrome UI. The local bridge must also be installed once from the source checkout or `chromex-public-source.zip`.
+
 Developer source install:
 
 ```bash
@@ -61,6 +63,30 @@ Then open `chrome://extensions`, enable **Developer mode**, select **Load unpack
 ```text
 packages/extension/dist
 ```
+
+### Windows Local Bridge Setup
+
+On Windows, use **PowerShell** from the `chromex` source folder after installing Node.js 20 LTS or newer:
+
+```powershell
+npm install
+npm run build
+node scripts/install-native-host.mjs --browser=chrome
+```
+
+Then open `chrome://extensions`, click **Reload** on Chromex, and press **Check connection** in the Chromex side panel.
+
+If the side panel still says the local bridge is waiting:
+
+1. Confirm Chromex is loaded from the release `chromex-extension` folder or from `packages/extension/dist`.
+2. Copy the extension ID shown on the Chromex card in `chrome://extensions`.
+3. Re-run the installer with that ID:
+
+```powershell
+node scripts/install-native-host.mjs <extension-id> --browser=chrome
+```
+
+The expected public release ID is `menmlhahmendmkiicbjihgjhppkgaeom`. If Chrome shows a different ID, use the ID shown in Chrome.
 
 ## Runtime Boundary
 
@@ -168,7 +194,7 @@ Chromex uses normal open-source release history from `0.1.1` onward. Versioning,
 
 ## Troubleshooting
 
-- **Native host missing or forbidden**: run `npm run build`, then `node scripts/install-native-host.mjs`, reload the extension in `chrome://extensions`, and check Chromex onboarding/system status.
+- **Native host missing or forbidden**: run `npm run build`, then `node scripts/install-native-host.mjs --browser=chrome`, reload the extension in `chrome://extensions`, and check Chromex onboarding/system status. If Chrome shows a different extension ID, run `node scripts/install-native-host.mjs <extension-id> --browser=chrome`.
 - **Model list does not load**: confirm the native bridge is connected, then sign in through the app-server-backed login flow.
 - **Page context is unavailable**: open Chromex from the target tab or approve the Chrome site permission prompt when the workflow requests access.
 - **Chrome still shows old UI**: run `npm run build`, reload the extension card, and confirm Chrome is loading `packages/extension/dist`.
