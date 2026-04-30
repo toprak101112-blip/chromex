@@ -498,18 +498,20 @@ async function writeLauncher({
   hostPath,
   bridgeEntryPath,
 }) {
+  const nodeDir = dirname(process.execPath);
   const launcherBody =
     platformFamily === "win32"
       ? [
           "@echo off",
           `set "BRIDGE_ENTRY=${bridgeEntryPath}"`,
-          `set "PATH=${dirname(process.execPath)};%APPDATA%\\npm;%LOCALAPPDATA%\\Programs\\Codex;%USERPROFILE%\\scoop\\shims;%PATH%"`,
+          `set "PATH=${nodeDir};%APPDATA%\\npm;%LOCALAPPDATA%\\Programs\\Codex;%USERPROFILE%\\scoop\\shims;%PATH%"`,
           `"${process.execPath}" "${hostPath}" %*`,
           "",
         ].join("\r\n")
       : [
           "#!/bin/sh",
           `export BRIDGE_ENTRY="${bridgeEntryPath}"`,
+          `export PATH="${nodeDir}:$PATH"`,
           `exec "${process.execPath}" "${hostPath}" "$@"`,
           "",
         ].join("\n");
