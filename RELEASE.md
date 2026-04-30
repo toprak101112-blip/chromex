@@ -23,9 +23,9 @@ Before tagging a release:
 5. Run `npm run build`.
 6. Run `npm run release:audit`.
 7. Run `npm run package:webstore` for Chrome Web Store upload artifacts.
-8. Run `npm run package:public` for GitHub release artifacts.
+8. Run `npm run package:public` for GitHub source release artifacts.
 9. Verify the release assets under `output/public-release/`.
-10. Upload both versioned artifacts and stable direct-download artifacts to the GitHub Release.
+10. Upload both the versioned source archive and stable direct-download source archive to the GitHub Release.
 
 ## GitHub Flow
 
@@ -51,14 +51,12 @@ Then upload the generated release archives from `output/public-release/` to the 
 For each release, attach these files:
 
 - `chromex-<version>-public-source-<timestamp>.zip`
-- `chromex-<version>-unpacked-extension-<timestamp>.zip`
 - `chromex-public-source.zip`
-- `chromex-unpacked-extension.zip`
 
 The stable asset names power README links such as:
 
 ```text
-https://github.com/GENEXIS-AI/chromex/releases/latest/download/chromex-unpacked-extension.zip
+https://github.com/GENEXIS-AI/chromex/releases/latest/download/chromex-public-source.zip
 ```
 
 ## Compatibility Policy

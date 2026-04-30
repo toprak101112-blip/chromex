@@ -3235,9 +3235,14 @@ function getNativeHostInstallCommand(strings: ReturnType<typeof getUiStrings>): 
 }
 
 function formatNativeHostInstallCommand(sourceInstallCommand: string, extensionId: string): string {
-  const [buildCommand, installCommand, ...extra] = sourceInstallCommand.split(" && ");
-  if (buildCommand && installCommand && extra.length === 0) {
-    return [buildCommand, `${installCommand}${extensionId ? ` ${extensionId}` : ""}`].join("\n");
+  const commands = sourceInstallCommand
+    .split(" && ")
+    .map((command) => command.trim())
+    .filter(Boolean);
+  if (commands.length > 1) {
+    const lastIndex = commands.length - 1;
+    commands[lastIndex] = `${commands[lastIndex]}${extensionId ? ` ${extensionId}` : ""}`;
+    return commands.join("\n");
   }
   return extensionId ? `${sourceInstallCommand} ${extensionId}` : sourceInstallCommand;
 }

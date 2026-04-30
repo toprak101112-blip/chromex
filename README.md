@@ -22,23 +22,11 @@ Published by **GenexisAI CHOI**.
 - Use voice transcription, live voice mode, page-aware suggestions, custom profiles, and optional Codex skills.
 - Run browser-control workflows through Chrome content scripts with visible in-page activity indicators.
 
-## Install In 5 Minutes
+## Install From Source
 
-Fastest path for users:
+GitHub Releases publish source code only. They do not ship a separate `chromex-extension` unpacked-extension ZIP because users were mixing that browser UI folder with the source folder and running `npm install` where no `package.json` exists.
 
-1. Open the [latest GitHub Release](https://github.com/GENEXIS-AI/chromex/releases/latest).
-2. Download [`chromex-unpacked-extension.zip`](https://github.com/GENEXIS-AI/chromex/releases/latest/download/chromex-unpacked-extension.zip) from the release assets.
-3. Unzip it.
-4. Open `chrome://extensions`.
-5. Enable **Developer mode**.
-6. Select **Load unpacked** and choose the unzipped `chromex-extension` folder.
-7. Open Chromex from the Chrome toolbar or side panel and follow onboarding.
-
-Release ZIP files are attached to GitHub Releases. They are not committed into the repository file tree. If the direct download link does not open, use the [latest release page](https://github.com/GENEXIS-AI/chromex/releases/latest) and download `chromex-unpacked-extension.zip` from **Assets**.
-
-The extension ZIP only installs the Chrome UI. The local bridge must also be installed once from the source checkout or `chromex-public-source.zip`.
-
-Developer source install:
+Use the source checkout or [`chromex-public-source.zip`](https://github.com/GENEXIS-AI/chromex/releases/latest/download/chromex-public-source.zip):
 
 ```bash
 git clone https://github.com/GENEXIS-AI/chromex.git
@@ -54,6 +42,8 @@ Then open `chrome://extensions`, enable **Developer mode**, select **Load unpack
 packages/extension/dist
 ```
 
+Important: run `npm install`, `npm run build`, and `install-native-host.mjs` from the `chromex` source folder that contains `package.json`. If Windows reports `ENOENT Could not read package.json`, you are in the wrong folder.
+
 ### Windows Local Bridge Setup
 
 On Windows, install Node.js 20 LTS or newer, then install and verify the Codex CLI first:
@@ -62,6 +52,8 @@ On Windows, install Node.js 20 LTS or newer, then install and verify the Codex C
 npm install -g @openai/codex
 codex --version
 ```
+
+Use the npm install path above even if `winget install Codex -s msstore` fails. `0x8a15005e: The server certificate did not match any of the expected values` is a Windows Store / TLS certificate-chain problem outside Chromex, not a Chromex install step.
 
 Then use **PowerShell** from the `chromex` source folder:
 
@@ -75,7 +67,7 @@ Then open `chrome://extensions`, click **Reload** on Chromex, and press **Check 
 
 If the side panel still says the local bridge is waiting:
 
-1. Confirm Chromex is loaded from the release `chromex-extension` folder or from `packages/extension/dist`.
+1. Confirm Chromex is loaded from `packages/extension/dist`.
 2. Copy the extension ID shown on the Chromex card in `chrome://extensions`.
 3. Re-run the installer with that ID:
 

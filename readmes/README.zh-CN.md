@@ -23,23 +23,11 @@ Published by **GenexisAI CHOI**.
 - 支持语音转写、实时语音模式、页面感知建议、自定义配置文件和可选 Codex skills。
 - 通过 Chrome content scripts 执行浏览器控制工作流，并在页面内显示可见的活动状态。
 
-## 5 分钟安装
+## 从源码安装
 
-普通用户最快路径:
+GitHub Releases 只发布源码包，不再发布单独的 `chromex-extension` unpacked-extension ZIP。这样可以避免用户把浏览器 UI 文件夹和源码文件夹混在一起，在没有 `package.json` 的位置运行 `npm install`。
 
-1. 打开 [latest GitHub Release](https://github.com/GENEXIS-AI/chromex/releases/latest)。
-2. 从 release assets 下载 [`chromex-unpacked-extension.zip`](https://github.com/GENEXIS-AI/chromex/releases/latest/download/chromex-unpacked-extension.zip)。
-3. 解压 ZIP。
-4. 在 Chrome 中打开 `chrome://extensions`。
-5. 启用 **Developer mode**。
-6. 点击 **Load unpacked**，选择解压后的 `chromex-extension` 文件夹。
-7. 从 Chrome 工具栏或侧边栏打开 Chromex，并按引导完成设置。
-
-Release ZIP 文件会附加在 GitHub Releases 中，不会直接提交到仓库文件树。如果直接下载链接无法打开，请进入 [latest release page](https://github.com/GENEXIS-AI/chromex/releases/latest)，在 **Assets** 中下载 `chromex-unpacked-extension.zip`。
-
-扩展 ZIP 只安装 Chrome UI。本地 bridge 还需要从源码 checkout 或 `chromex-public-source.zip` 中单独安装一次。
-
-开发者源码安装:
+请使用源码 checkout 或 [`chromex-public-source.zip`](https://github.com/GENEXIS-AI/chromex/releases/latest/download/chromex-public-source.zip):
 
 ```bash
 git clone https://github.com/GENEXIS-AI/chromex.git
@@ -55,6 +43,8 @@ node scripts/install-native-host.mjs
 packages/extension/dist
 ```
 
+重要: `npm install`、`npm run build` 和 `install-native-host.mjs` 必须在包含 `package.json` 的 `chromex` 源码文件夹中运行。如果 Windows 提示 `ENOENT Could not read package.json`，说明当前目录不对。
+
 ### Windows 本地 Bridge 设置
 
 在 Windows 上，请先安装 Node.js 20 LTS 或更新版本，然后先安装并确认 Codex CLI:
@@ -63,6 +53,8 @@ packages/extension/dist
 npm install -g @openai/codex
 codex --version
 ```
+
+即使 `winget install Codex -s msstore` 失败，也请使用上面的 npm 安装路径。`0x8a15005e: The server certificate did not match any of the expected values` 是 Windows Store / TLS 证书链问题，不是 Chromex 安装步骤。
 
 然后在 `chromex` 源码文件夹中用 **PowerShell** 运行:
 
@@ -76,7 +68,7 @@ node scripts/install-native-host.mjs --browser=chrome
 
 如果侧边栏仍显示正在等待本地 bridge:
 
-1. 确认 Chromex 是从 release 的 `chromex-extension` 文件夹或 `packages/extension/dist` 加载的。
+1. 确认 Chromex 是从 `packages/extension/dist` 加载的。
 2. 复制 `chrome://extensions` 中 Chromex 卡片显示的 extension ID。
 3. 用该 ID 重新运行安装器。
 

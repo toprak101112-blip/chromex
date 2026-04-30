@@ -50,7 +50,8 @@ describe("open-source repository hygiene", () => {
     expect(readme).toContain("./readmes/README.zh-CN.md");
     for (const publicReadme of publicReadmes) {
       expect(publicReadme).toContain("assets/chromex-hero.png");
-      expect(publicReadme).toContain("releases/latest/download/chromex-unpacked-extension.zip");
+      expect(publicReadme).toContain("releases/latest/download/chromex-public-source.zip");
+      expect(publicReadme).toContain("ENOENT Could not read package.json");
       expect(publicReadme).toContain("README.ja.md");
       expect(publicReadme).toContain("README.zh-CN.md");
       expect(publicReadme.trim().endsWith("</a>")).toBe(true);
@@ -59,13 +60,14 @@ describe("open-source repository hygiene", () => {
       expect(publicReadme).toContain("npm install -g @openai/codex");
       expect(publicReadme).toContain("codex --version");
       expect(publicReadme).toContain("%APPDATA%\\npm\\codex.cmd");
+      expect(publicReadme).not.toContain("chromex-unpacked-extension.zip");
       expect(publicReadme).not.toContain("Chrome Web Store Package");
       expect(publicReadme).not.toContain("npm run package:webstore");
       expect(publicReadme).not.toContain("npm run package:public");
       expect(publicReadme).not.toContain("output/chrome-web-store");
     }
-    expect(publicReleaseScript).toContain("requireManifestKey: true");
-    expect(publicReleaseScript).toContain("must keep manifest.key");
+    expect(publicReleaseScript).not.toContain("chromex-unpacked-extension");
+    expect(publicReleaseScript).not.toContain("requireManifestKey: true");
     expect(publicReleaseScript).not.toContain("delete manifest.key");
     expect(existsSync(resolve(repoRoot, "assets/chromex-hero.png"))).toBe(true);
     expect(readme).not.toContain(["What", "Is", "Not", "Published"].join(" "));
@@ -125,7 +127,8 @@ describe("open-source repository hygiene", () => {
     expect(existsSync(resolve(repoRoot, "RELEASE.md"))).toBe(true);
     expect(readRepoFile("RELEASE.md")).toContain("0.1.1");
     expect(readRepoFile("RELEASE.md")).toContain("semantic versioning");
-    expect(readRepoFile("RELEASE.md")).toContain("chromex-unpacked-extension.zip");
+    expect(readRepoFile("RELEASE.md")).toContain("chromex-public-source.zip");
+    expect(readRepoFile("RELEASE.md")).not.toContain("chromex-unpacked-extension.zip");
     expect(existsSync(resolve(repoRoot, "scripts/package-public-release.mjs"))).toBe(true);
     expect(existsSync(resolve(repoRoot, "scripts/audit-git-history.mjs"))).toBe(true);
   });
