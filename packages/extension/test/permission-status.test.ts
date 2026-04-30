@@ -12,13 +12,7 @@ describe("permission status display", () => {
     ).toBe(false);
   });
 
-  test("does not show persistent banners for browser API permission prompts", () => {
-    expect(
-      shouldShowPermissionStatusBanner({
-        permissions: ["tabs"],
-        rationale: "Allow Codex to list your open tabs only when you ask for cross-tab context.",
-      }),
-    ).toBe(false);
+  test("does not show persistent banners for optional browser API permission prompts", () => {
     expect(
       shouldShowPermissionStatusBanner({
         permissions: ["history"],

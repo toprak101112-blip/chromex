@@ -67,7 +67,7 @@ const screenshotScenarios = [
     answerTitle: "Privacy boundary",
     answer: [
       "The extension stores no raw OpenAI API keys.",
-      "Browser history, microphone, host access, and screen capture are requested only for the feature being used."
+      "Page and tab access power core workflows; history, microphone, and screen capture stay feature-scoped."
     ],
     suggestions: ["Article summary", "Fact check claims", "Create infographic"]
   },

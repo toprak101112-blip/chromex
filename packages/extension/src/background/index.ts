@@ -4062,15 +4062,12 @@ async function ensureHistoryPermission(): Promise<boolean> {
 }
 
 async function ensureTabsPermission(): Promise<boolean> {
-  const alreadyGranted = await chrome.permissions.contains({ permissions: ["tabs"] });
+  const alreadyGranted = await chrome.permissions.contains({ permissions: ["tabs"] }).catch(() => false);
   if (alreadyGranted) {
     return true;
   }
 
-  throw new BrowserPermissionRequiredError(
-    { permissions: ["tabs"] },
-    "Allow Codex to list your open tabs only when you ask for cross-tab context.",
-  );
+  throw new Error("Open-tab access is unavailable. Reload Chromex after accepting the required Tabs permission.");
 }
 
 function assertPageReadable(url: string): void {

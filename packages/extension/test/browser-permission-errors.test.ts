@@ -8,13 +8,13 @@ import {
 describe("browser permission errors", () => {
   test("keeps optional permission requests structured for the side panel", () => {
     const error = new BrowserPermissionRequiredError(
-      { permissions: ["tabs"] },
-      "Allow Codex to list your open tabs only when you ask for cross-tab context.",
+      { permissions: ["history"] },
+      "Allow Codex to search your browser history only when you ask for it.",
     );
 
     expect(isBrowserPermissionRequiredError(error)).toBe(true);
-    expect(error.permission).toEqual({ permissions: ["tabs"] });
-    expect(error.rationale).toBe("Allow Codex to list your open tabs only when you ask for cross-tab context.");
+    expect(error.permission).toEqual({ permissions: ["history"] });
+    expect(error.rationale).toBe("Allow Codex to search your browser history only when you ask for it.");
   });
 
   test("does not classify plain errors as permission requests", () => {

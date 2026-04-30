@@ -10739,16 +10739,6 @@ async function refreshOpenTabSuggestions(options: { requestPermission: boolean }
   render();
 
   try {
-    if (!options.requestPermission) {
-      const alreadyGranted = await chrome.permissions.contains({ permissions: ["tabs"] }).catch(() => false);
-      if (!alreadyGranted) {
-        state.openTabOptions = [];
-        state.openTabOptionsState = "permission";
-        render();
-        return;
-      }
-    }
-
     const result = options.requestPermission
       ? await sendRuntimeMessageWithConfirmation<{ tabs: OpenTabContext[] }>({ type: "context.tabs.list" })
       : await sendRuntimeMessage<{ tabs?: OpenTabContext[]; requiresPermission?: boolean }>({ type: "context.tabs.list" });

@@ -1105,6 +1105,22 @@ try {
     throw new Error(`Smoke test failed: quick system did not submit current-page prompt (${JSON.stringify(quickSystemSubmissions)}).`);
   }
 
+  await page.evaluate(() =>
+    window.__CODEX_SIDEPANEL_SMOKE__?.simulateActiveTabUpdateForTest?.({
+      title: "A useful video - YouTube",
+      url: "https://www.youtube.com/watch?v=action-card-smoke",
+      actionCards: [
+        {
+          id: "youtube-summary-question",
+          title: "요약",
+          description: "현재 페이지를 요약합니다.",
+          kind: "prompt",
+          prompt: "__smoke_action_card_prompt__",
+        },
+      ],
+    }),
+  );
+  await page.waitForSelector('[data-action="youtube-summary-question"]', { timeout: 5_000 });
   await page.locator('[data-action="youtube-summary-question"]').click();
   const actionSubmissions = await page.evaluate(() =>
     window.__CODEX_SIDEPANEL_SMOKE__?.getDryRunSubmissions?.() ?? [],

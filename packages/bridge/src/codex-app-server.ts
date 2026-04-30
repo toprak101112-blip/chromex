@@ -365,7 +365,7 @@ export function createCodexSpawnOptions(
   command: string,
   platformName: NodeJS.Platform = process.platform,
 ): { shell?: boolean } {
-  return platformName === "win32" && /\.(?:cmd|bat)$/iu.test(command) ? { shell: true } : {};
+  return platformName === "win32" ? { shell: true } : {};
 }
 
 function delay(delayMs: number): Promise<void> {

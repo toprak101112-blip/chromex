@@ -109,14 +109,19 @@ describe("InMemoryBridgeSecrets", () => {
 });
 
 describe("Codex app-server startup", () => {
-  test("runs Windows command shims through a shell so npm global codex.cmd can start", () => {
+  test("runs Windows Codex commands through a shell so npm global shims can start", () => {
     expect(createCodexSpawnOptions("C:\\Users\\example\\AppData\\Roaming\\npm\\codex.cmd", "win32")).toEqual({
       shell: true,
     });
     expect(createCodexSpawnOptions("C:\\Users\\example\\AppData\\Roaming\\npm\\codex.bat", "win32")).toEqual({
       shell: true,
     });
-    expect(createCodexSpawnOptions("C:\\Tools\\codex.exe", "win32")).toEqual({});
+    expect(createCodexSpawnOptions("C:\\Users\\example\\AppData\\Roaming\\npm\\codex", "win32")).toEqual({
+      shell: true,
+    });
+    expect(createCodexSpawnOptions("C:\\Tools\\codex.exe", "win32")).toEqual({
+      shell: true,
+    });
     expect(createCodexSpawnOptions("/usr/local/bin/codex", "darwin")).toEqual({});
   });
 });

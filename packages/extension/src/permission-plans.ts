@@ -79,10 +79,7 @@ export function getPermissionRequestForMessage(
 ): PermissionRequestPlan | null {
   switch (message.type) {
     case "context.tabs.list":
-      return {
-        permissions: ["tabs"],
-        rationale: "Allow Codex to list your open tabs only when you ask for cross-tab context.",
-      };
+      return null;
     case "context.history.search":
       return {
         permissions: ["history"],

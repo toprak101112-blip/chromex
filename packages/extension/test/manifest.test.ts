@@ -74,7 +74,7 @@ const REQUIRED_CHROME_MESSAGE_KEYS = [
 ] as const;
 
 describe("extension manifest", () => {
-  test("keeps intrusive permissions optional and uses a stable public key for unpacked native host installs", () => {
+  test("declares core page and tab access and uses a stable public key for unpacked native host installs", () => {
     const manifestPath = resolve(dirname(fileURLToPath(import.meta.url)), "../public/manifest.json");
     const manifest = JSON.parse(readFileSync(manifestPath, "utf8")) as {
       action?: {
@@ -86,6 +86,7 @@ describe("extension manifest", () => {
       name?: string;
       permissions?: string[];
       optional_permissions?: string[];
+      host_permissions?: string[];
       web_accessible_resources?: unknown[];
     };
 
@@ -94,8 +95,9 @@ describe("extension manifest", () => {
     expect(manifest.action?.default_title).toBe("__MSG_actionOpenSidePanel__");
     expect(manifest.action?.default_icon?.["32"]).toBe("icons/codex-32.png");
     expect(manifest.key).toBe("MIIBIjANBgkqhkiG9w0BAQEFAAOCAQ8AMIIBCgKCAQEAuP+A4d/pFvVoYH/4yByEMq1JknmBMcsBo5hbyjFDRthp9GrAWTnksc0X/dP5kftZ45O+IlfP6rfg5w7ktNDt7tuJ0TpslnQEUvzC9D0CkEWzj6OmuWgY7nCtmnuHHItp1xJR9RsCDMNg9qFf54EiCf6eyTDrkJnn1yeIx/rIZRcbqnFjBLrVsuSz18L21/b+zQ8o+xzPWWhOYGVnuxuQvL57/MiDfSJ5zI0xgnYgMP/OXhdRTKmJeu/0pdEcrk2y1WgAE2LfI0jKjF6VIjKmDHabJRlP3/UZy6siRFHPZs2Q5Eh+Wxb0MtfiXN2r64R9p7MjGOkaw71GH+itEiAxuwIDAQAB");
-    expect(manifest.permissions ?? []).not.toContain("tabs");
-    expect(manifest.optional_permissions ?? []).toContain("tabs");
+    expect(manifest.permissions ?? []).toContain("tabs");
+    expect(manifest.host_permissions ?? []).toContain("<all_urls>");
+    expect(manifest.optional_permissions ?? []).not.toContain("tabs");
     expect(manifest.optional_permissions ?? []).not.toContain("tabCapture");
     expect(manifest.web_accessible_resources).toEqual([
       {

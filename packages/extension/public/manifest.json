@@ -16,17 +16,17 @@
     "offscreen",
     "sidePanel",
     "activeTab",
+    "tabs",
     "scripting",
     "storage",
     "contextMenus",
     "nativeMessaging"
   ],
-  "optional_permissions": [
-    "history",
-    "tabs"
-  ],
-  "optional_host_permissions": [
+  "host_permissions": [
     "<all_urls>"
+  ],
+  "optional_permissions": [
+    "history"
   ],
   "background": {
     "service_worker": "background.js",

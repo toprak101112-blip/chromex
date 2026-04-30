@@ -33,11 +33,8 @@ describe("permission plans", () => {
     });
   });
 
-  test("requests tabs permission only when the user asks for cross-tab context", () => {
-    expect(getPermissionRequestForMessage({ type: "context.tabs.list" })).toEqual({
-      permissions: ["tabs"],
-      rationale: "Allow Codex to list your open tabs only when you ask for cross-tab context.",
-    });
+  test("does not request tabs permission because tab context is a core install permission", () => {
+    expect(getPermissionRequestForMessage({ type: "context.tabs.list" })).toBeNull();
   });
 
   test("does not pre-request site access before prompt sends", () => {
