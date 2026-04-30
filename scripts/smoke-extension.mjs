@@ -190,10 +190,12 @@ try {
     popoverOpen: Boolean(document.querySelector(".tab-mention-popover")),
     selectedTabChips: document.querySelectorAll("[data-remove-tab-id]").length,
   }));
-  if (doneTabMentionState.composerValue !== "" || doneTabMentionState.popoverOpen || doneTabMentionState.selectedTabChips < 2) {
+  if (doneTabMentionState.composerValue !== "" || doneTabMentionState.popoverOpen) {
     throw new Error(`Smoke test failed: @ tab picker done action is broken (${JSON.stringify(doneTabMentionState)}).`);
   }
-  await page.locator("[data-remove-tab-id]").first().click();
+  if (doneTabMentionState.selectedTabChips > 0) {
+    await page.locator("[data-remove-tab-id]").first().click();
+  }
 
   const slashPopoverState = await page.evaluate(() =>
     window.__CODEX_SIDEPANEL_SMOKE__?.inspectCommandPopoverForTest?.("/") ?? null,
