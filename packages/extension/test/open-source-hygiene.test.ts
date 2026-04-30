@@ -133,7 +133,10 @@ describe("open-source repository hygiene", () => {
     expect(installer).toContain("includeLegacyExtensionIds ? LEGACY_EXTENSION_IDS : []");
     expect(installer).toContain("%APPDATA%\\\\npm");
     expect(installer).toContain("%USERPROFILE%\\\\scoop\\\\shims");
-    expect(installer).toContain("Downloads/chromex-extension");
+    expect(installer).toContain('resolve(homeDir, "Downloads", "chromex-extension")');
+    expect(installer).toContain("assertSelectedBrowsersSupportedOnPlatform");
+    expect(installer).toContain('profileDir && platformFamily !== "win32"');
+    expect(installer).toContain("--profile-dir is ignored on Windows");
     expect(installer).not.toContain("[extensionId, ...LEGACY_EXTENSION_IDS, ...discoveredExtensionIds]");
   });
 });

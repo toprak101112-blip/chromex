@@ -152,9 +152,12 @@ function playwrightBrowserRoots(packageInfo: PlaywrightPackage | null): string[]
   const home = homedir();
   switch (platform()) {
     case "darwin":
-      return [...localBrowserRoot, resolve(home, "Library/Caches/ms-playwright")];
+      return [...localBrowserRoot, resolve(home, "Library", "Caches", "ms-playwright")];
     case "win32":
-      return [...localBrowserRoot, resolve(readEnvValue(process.env, "LOCALAPPDATA") || resolve(home, "AppData/Local"), "ms-playwright")];
+      return [
+        ...localBrowserRoot,
+        resolve(readEnvValue(process.env, "LOCALAPPDATA") || resolve(home, "AppData", "Local"), "ms-playwright"),
+      ];
     default:
       return [...localBrowserRoot, resolve(readEnvValue(process.env, "XDG_CACHE_HOME") || resolve(home, ".cache"), "ms-playwright")];
   }

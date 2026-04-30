@@ -117,13 +117,13 @@ async function listProfileDirs(root) {
 function resolveProfileRoots(platformFamily, homeDir) {
   if (platformFamily === "darwin") {
     return [
-      resolve(homeDir, "Library/Application Support/Google/Chrome"),
-      resolve(homeDir, "Library/Application Support/Google/Chrome Beta"),
-      resolve(homeDir, "Library/Application Support/Google/Chrome Dev"),
-      resolve(homeDir, "Library/Application Support/Google/Chrome Canary"),
-      resolve(homeDir, "Library/Application Support/Google/Chrome for Testing"),
-      resolve(homeDir, "Library/Application Support/Google/ChromeForTesting"),
-      resolve(homeDir, "Library/Application Support/Chromium"),
+      resolve(homeDir, "Library", "Application Support", "Google", "Chrome"),
+      resolve(homeDir, "Library", "Application Support", "Google", "Chrome Beta"),
+      resolve(homeDir, "Library", "Application Support", "Google", "Chrome Dev"),
+      resolve(homeDir, "Library", "Application Support", "Google", "Chrome Canary"),
+      resolve(homeDir, "Library", "Application Support", "Google", "Chrome for Testing"),
+      resolve(homeDir, "Library", "Application Support", "Google", "ChromeForTesting"),
+      resolve(homeDir, "Library", "Application Support", "Chromium"),
     ];
   }
   if (platformFamily === "linux") {
@@ -137,14 +137,14 @@ function resolveProfileRoots(platformFamily, homeDir) {
     ];
   }
   if (platformFamily === "win32") {
-    const localAppData = readEnvValue(process.env, "LOCALAPPDATA") || resolve(homeDir, "AppData/Local");
+    const localAppData = readEnvValue(process.env, "LOCALAPPDATA") || resolve(homeDir, "AppData", "Local");
     return [
-      resolve(localAppData, "Google/Chrome/User Data"),
-      resolve(localAppData, "Google/Chrome Beta/User Data"),
-      resolve(localAppData, "Google/Chrome Dev/User Data"),
-      resolve(localAppData, "Google/Chrome SxS/User Data"),
-      resolve(localAppData, "Google/Chrome for Testing/User Data"),
-      resolve(localAppData, "Chromium/User Data"),
+      resolve(localAppData, "Google", "Chrome", "User Data"),
+      resolve(localAppData, "Google", "Chrome Beta", "User Data"),
+      resolve(localAppData, "Google", "Chrome Dev", "User Data"),
+      resolve(localAppData, "Google", "Chrome SxS", "User Data"),
+      resolve(localAppData, "Google", "Chrome for Testing", "User Data"),
+      resolve(localAppData, "Chromium", "User Data"),
     ];
   }
   return [];
