@@ -130,6 +130,20 @@ function stopContentScriptRuntimeWatchdog(): void {
   chromexRuntimeWatchdogTimer = null;
 }
 
+function safeRemoveElement(element: Element | null | undefined): void {
+  if (!element) {
+    return;
+  }
+  try {
+    element.remove();
+  } catch (error) {
+    if (error instanceof DOMException && error.name === "NotFoundError") {
+      return;
+    }
+    throw error;
+  }
+}
+
 function chromexRuntimeMessageListener(
   message: Record<string, any>,
   _sender: chrome.runtime.MessageSender,
@@ -351,14 +365,14 @@ function showAiControlOverlay(mode: BrowserAutomationMode, label = "Codex is con
 function removeStaleAiControlOverlays(): void {
   for (const node of Array.from(document.querySelectorAll(".codex-ai-control-border"))) {
     if (node !== aiControlOverlayNode) {
-      node.remove();
+      safeRemoveElement(node);
     }
   }
 }
 
 function hideAiControlOverlay(): void {
   clearAiControlOverlayTimers();
-  aiControlOverlayNode?.remove();
+  safeRemoveElement(aiControlOverlayNode);
   aiControlOverlayNode = null;
 }
 
@@ -1254,7 +1268,7 @@ function hideImagePromptHoverButton(options: { immediate?: boolean } = {}): void
     return;
   }
   if (options.immediate) {
-    button.remove();
+    safeRemoveElement(button);
     imagePromptHoverButton = null;
     removeImagePromptHoverButtons();
     return;
@@ -1262,7 +1276,7 @@ function hideImagePromptHoverButton(options: { immediate?: boolean } = {}): void
   setImagePromptHoverButtonVisible(button, false);
   imagePromptHoverButtonRemoveTimer = window.setTimeout(() => {
     if (imagePromptHoverButton === button) {
-      button.remove();
+      safeRemoveElement(button);
       imagePromptHoverButton = null;
     }
     imagePromptHoverButtonRemoveTimer = null;
@@ -1291,7 +1305,7 @@ function removeImagePromptHoverButtons(except: HTMLButtonElement | null = null):
     if (button === except) {
       continue;
     }
-    button.remove();
+    safeRemoveElement(button);
   }
 }
 
@@ -1457,7 +1471,7 @@ async function applyImageOverlay(previewRef: string): Promise<void> {
 }
 
 function clearImageOverlay(): void {
-  overlayNode?.remove();
+  safeRemoveElement(overlayNode);
   overlayNode = null;
 }
 

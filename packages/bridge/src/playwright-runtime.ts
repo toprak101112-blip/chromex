@@ -24,7 +24,7 @@ export class PlaywrightRuntimeManager {
     const packageInfo = await this.#resolvePackage();
     const browserExecutablePath = await findChromiumExecutable(packageInfo);
     const browserInstalled = Boolean(browserExecutablePath);
-    const installCommand = packageInfo ? `node ${packageInfo.cliPath} ${PLAYWRIGHT_INSTALL_ARGS.join(" ")}` : "npm install";
+    const installCommand = packageInfo ? formatPlaywrightInstallCommand(packageInfo.cliPath) : "npm install";
 
     return {
       available: Boolean(packageInfo && browserInstalled),
@@ -139,7 +139,7 @@ async function findChromiumExecutableInRoot(root: string): Promise<string> {
 }
 
 function playwrightBrowserRoots(packageInfo: PlaywrightPackage | null): string[] {
-  const explicit = readEnvValue(process.env, "PLAYWRIGHT_BROWSERS_PATH")?.trim();
+  const explicit = stripWrappingQuotes(readEnvValue(process.env, "PLAYWRIGHT_BROWSERS_PATH")?.trim() ?? "");
   if (explicit && explicit !== "0") {
     return [resolve(explicit)];
   }
@@ -163,15 +163,33 @@ function playwrightBrowserRoots(packageInfo: PlaywrightPackage | null): string[]
   }
 }
 
-function chromiumExecutableCandidates(): string[] {
-  switch (platform()) {
+export function chromiumExecutableCandidates(platformName: NodeJS.Platform = platform()): string[] {
+  switch (platformName) {
     case "darwin":
-      return ["chrome-mac/Chromium.app/Contents/MacOS/Chromium"];
+      return [
+        "chrome-mac/Chromium.app/Contents/MacOS/Chromium",
+        "chrome-mac/Google Chrome for Testing.app/Contents/MacOS/Google Chrome for Testing",
+        "chrome-mac-arm64/Chromium.app/Contents/MacOS/Chromium",
+        "chrome-mac-arm64/Google Chrome for Testing.app/Contents/MacOS/Google Chrome for Testing",
+      ];
     case "win32":
-      return ["chrome-win/chrome.exe"];
+      return [
+        "chrome-win/chrome.exe",
+        "chrome-win64/chrome.exe",
+        "chrome-win/headless_shell.exe",
+        "chrome-win64/headless_shell.exe",
+      ];
     default:
-      return ["chrome-linux/chrome"];
+      return ["chrome-linux/chrome", "chrome-linux64/chrome", "chrome-linux/headless_shell", "chrome-linux64/headless_shell"];
   }
+}
+
+export function formatPlaywrightInstallCommand(cliPath: string): string {
+  return ["node", quoteShellArg(cliPath), ...PLAYWRIGHT_INSTALL_ARGS].join(" ");
+}
+
+function quoteShellArg(value: string): string {
+  return `"${value.replaceAll("\"", "\\\"")}"`;
 }
 
 function createPlaywrightStatusMessage(packageInfo: PlaywrightPackage | null, browserInstalled: boolean): string {
@@ -207,4 +225,16 @@ function readEnvValue(env: NodeJS.ProcessEnv, key: string): string | undefined {
   const actualKey = Object.keys(env).find((candidate) => candidate.toLowerCase() === normalizedKey);
   const value = actualKey ? env[actualKey] : undefined;
   return typeof value === "string" ? value : undefined;
+}
+
+function stripWrappingQuotes(value: string): string {
+  let normalized = value.trim();
+  while (
+    normalized.length >= 2 &&
+    ((normalized.startsWith("\"") && normalized.endsWith("\"")) ||
+      (normalized.startsWith("'") && normalized.endsWith("'")))
+  ) {
+    normalized = normalized.slice(1, -1).trim();
+  }
+  return normalized;
 }

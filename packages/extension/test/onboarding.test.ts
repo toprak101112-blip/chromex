@@ -47,13 +47,17 @@ describe("auth onboarding", () => {
     expect(sidepanelSource).toContain('id="onboarding-reconnect"');
     expect(sidepanelSource).toContain('id="onboarding-open-settings"');
     expect(sidepanelSource).toContain('class="auth-onboarding-install"');
-    expect(sidepanelSource).toContain("strings.onboarding.sourceInstallCommand");
+    expect(sidepanelSource).toContain("getNativeHostInstallCommand(strings)");
+    expect(sidepanelSource).toContain("formatNativeHostInstallCommand");
+    expect(sidepanelSource).toContain('.join("\\n")');
+    expect(sidepanelSource).toContain("chrome.runtime?.id");
     expect(sidepanelSource).toContain("strings.onboarding.webOnlyUnavailable");
     expect(sidepanelSource).toContain('openNativeTextDialog("api-key")');
     expect(sidepanelCss).toContain(".auth-onboarding");
     expect(sidepanelCss).toContain(".auth-onboarding-card");
     expect(sidepanelCss).toContain(".auth-onboarding-readiness");
     expect(sidepanelCss).toContain(".auth-onboarding-install");
+    expect(sidepanelCss).toContain("white-space: pre-wrap");
   });
 
   test("blocks login until the local native host and Codex runtime are ready", () => {

@@ -120,6 +120,44 @@ describe("resolveCodexCommand", () => {
     });
   });
 
+  test("accepts quoted Windows Codex paths copied from PowerShell or docs", async () => {
+    const result = await resolveCodexCommand({
+      configuredCommand: "\"%APPDATA%\\npm\\codex.cmd\"",
+      pathValue: "\"C:\\Users\\example\\AppData\\Roaming\\npm\";C:\\Windows\\System32",
+      env: { APPDATA: "C:\\Users\\example\\AppData\\Roaming" },
+      platformName: "win32",
+      homeDirectory: "C:\\Users\\example",
+      isExecutable: createExecutableProbe(["C:\\Users\\example\\AppData\\Roaming\\npm\\codex.cmd"]),
+    });
+
+    expect(result).toEqual({
+      configuredCommand: "%APPDATA%\\npm\\codex.cmd",
+      resolvedCommand: "C:\\Users\\example\\AppData\\Roaming\\npm\\codex.cmd",
+      source: "configured",
+      configuredCommandInvalid: false,
+    });
+  });
+
+  test("accepts quoted CODEX_BIN values on Windows", async () => {
+    const result = await resolveCodexCommand({
+      env: {
+        CODEX_BIN: "'$env:APPDATA\\npm\\codex.cmd'",
+        APPDATA: "C:\\Users\\example\\AppData\\Roaming",
+      },
+      pathValue: "C:\\Windows\\System32",
+      platformName: "win32",
+      homeDirectory: "C:\\Users\\example",
+      isExecutable: createExecutableProbe(["C:\\Users\\example\\AppData\\Roaming\\npm\\codex.cmd"]),
+    });
+
+    expect(result).toEqual({
+      configuredCommand: "",
+      resolvedCommand: "C:\\Users\\example\\AppData\\Roaming\\npm\\codex.cmd",
+      source: "env",
+      configuredCommandInvalid: false,
+    });
+  });
+
   test("uses Windows Path and CODEX_BIN environment names case-insensitively", async () => {
     const result = await resolveCodexCommand({
       env: {
@@ -155,6 +193,89 @@ describe("resolveCodexCommand", () => {
       resolvedCommand: "C:\\Users\\example\\AppData\\Roaming\\npm\\codex.cmd",
       source: "common",
       configuredCommandInvalid: false,
+    });
+  });
+
+  test("finds common Windows package-manager shims when Chrome provides a minimal PATH", async () => {
+    const result = await resolveCodexCommand({
+      configuredCommand: "",
+      envCommand: "",
+      pathValue: "C:\\Windows\\System32",
+      env: {
+        LOCALAPPDATA: "C:\\Users\\example\\AppData\\Local",
+        APPDATA: "C:\\Users\\example\\AppData\\Roaming",
+        PNPM_HOME: "C:\\Users\\example\\AppData\\Local\\pnpm",
+        USERPROFILE: "C:\\Users\\example",
+      },
+      platformName: "win32",
+      homeDirectory: "C:\\Users\\example",
+      isExecutable: createExecutableProbe(["C:\\Users\\example\\AppData\\Local\\pnpm\\codex.cmd"]),
+    });
+
+    expect(result).toEqual({
+      configuredCommand: "",
+      resolvedCommand: "C:\\Users\\example\\AppData\\Local\\pnpm\\codex.cmd",
+      source: "common",
+      configuredCommandInvalid: false,
+    });
+  });
+
+  test("prefers Windows runnable extensions when resolving codex from PATH", async () => {
+    const result = await resolveCodexCommand({
+      configuredCommand: "",
+      envCommand: "",
+      pathValue: "C:\\Users\\example\\AppData\\Roaming\\npm;C:\\Windows\\System32",
+      platformName: "win32",
+      homeDirectory: "C:\\Users\\example",
+      isExecutable: createExecutableProbe([
+        "C:\\Users\\example\\AppData\\Roaming\\npm\\codex",
+        "C:\\Users\\example\\AppData\\Roaming\\npm\\codex.cmd",
+      ]),
+    });
+
+    expect(result).toEqual({
+      configuredCommand: "",
+      resolvedCommand: "C:\\Users\\example\\AppData\\Roaming\\npm\\codex.cmd",
+      source: "path",
+      configuredCommandInvalid: false,
+    });
+  });
+
+  test("prefers the runnable Windows npm cmd shim over the no-extension shell shim", async () => {
+    const result = await resolveCodexCommand({
+      configuredCommand: "C:\\Users\\example\\AppData\\Roaming\\npm\\codex",
+      pathValue: "C:\\Windows\\System32",
+      platformName: "win32",
+      homeDirectory: "C:\\Users\\example",
+      isExecutable: createExecutableProbe([
+        "C:\\Users\\example\\AppData\\Roaming\\npm\\codex",
+        "C:\\Users\\example\\AppData\\Roaming\\npm\\codex.cmd",
+      ]),
+    });
+
+    expect(result).toEqual({
+      configuredCommand: "C:\\Users\\example\\AppData\\Roaming\\npm\\codex",
+      resolvedCommand: "C:\\Users\\example\\AppData\\Roaming\\npm\\codex.cmd",
+      source: "configured",
+      configuredCommandInvalid: false,
+    });
+  });
+
+  test("does not treat a Windows no-extension npm shell shim as runnable by itself", async () => {
+    const result = await resolveCodexCommand({
+      configuredCommand: "C:\\Users\\example\\AppData\\Roaming\\npm\\codex",
+      envCommand: "",
+      pathValue: "C:\\Windows\\System32",
+      platformName: "win32",
+      homeDirectory: "C:\\Users\\example",
+      isExecutable: createExecutableProbe(["C:\\Users\\example\\AppData\\Roaming\\npm\\codex"]),
+    });
+
+    expect(result).toEqual({
+      configuredCommand: "C:\\Users\\example\\AppData\\Roaming\\npm\\codex",
+      resolvedCommand: "",
+      source: "missing",
+      configuredCommandInvalid: true,
     });
   });
 });

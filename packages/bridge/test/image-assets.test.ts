@@ -119,6 +119,31 @@ describe("BridgeImageAssetStore", () => {
     );
   });
 
+  test("normalizes quoted and environment-based generated image output folders", async () => {
+    const tempDir = await mkdtemp(join(tmpdir(), "codex-sidepanel-quoted-image-output-"));
+    const outputDir = join(tempDir, "Generated Images");
+    const previousEnv = process.env.CODEX_TEST_IMAGE_OUTPUT_DIR;
+    process.env.CODEX_TEST_IMAGE_OUTPUT_DIR = outputDir;
+    try {
+      const store = new BridgeImageAssetStore({
+        outputDir: () => "'$env:CODEX_TEST_IMAGE_OUTPUT_DIR'",
+      });
+      await store.registerBase64(Buffer.from("image").toString("base64"), "image/png");
+      const snapshot = await store.describeFolders();
+
+      expect(snapshot.rootDir).toBe(outputDir);
+      expect(resolveGeneratedImageOutputDir(`"${tempDir}"`)).toBe(
+        join(tempDir, ".codex-sidepanel", "generated-images"),
+      );
+    } finally {
+      if (previousEnv === undefined) {
+        delete process.env.CODEX_TEST_IMAGE_OUTPUT_DIR;
+      } else {
+        process.env.CODEX_TEST_IMAGE_OUTPUT_DIR = previousEnv;
+      }
+    }
+  });
+
   test("deletes only registered generated image assets by preview ref", async () => {
     const tempDir = await mkdtemp(join(tmpdir(), "codex-sidepanel-asset-delete-test-"));
     const store = new BridgeImageAssetStore(Promise.resolve(tempDir));

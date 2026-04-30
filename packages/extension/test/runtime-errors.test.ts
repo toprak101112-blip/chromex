@@ -26,12 +26,28 @@ describe("runtime message error helpers", () => {
     expect(isRetryableRuntimeMessageError(error)).toBe(true);
   });
 
+  test("classifies friendly lost-tab messages as transient disconnects", () => {
+    const error = new Error("Codex temporarily lost its connection to this tab. Try the action once more.");
+
+    expect(classifyRuntimeMessageError(error)).toBe("transient-disconnect");
+    expect(isRetryableRuntimeMessageError(error)).toBe(true);
+  });
+
   test("classifies raw host-access failures separately", () => {
     const error = new Error(
       "Cannot access contents of url \"https://x.com/home\". Extension manifest must request permission to access this host.",
     );
 
     expect(classifyRuntimeMessageError(error)).toBe("host-access");
+    expect(isRetryableRuntimeMessageError(error)).toBe(false);
+  });
+
+  test("classifies expired Codex OAuth sessions separately", () => {
+    const error = new Error(
+      "Your access token could not be refreshed because you have since logged out or signed in to another account. Please sign in again.",
+    );
+
+    expect(classifyRuntimeMessageError(error)).toBe("auth-expired");
     expect(isRetryableRuntimeMessageError(error)).toBe(false);
   });
 

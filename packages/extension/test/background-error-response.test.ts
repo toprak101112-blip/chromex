@@ -63,6 +63,19 @@ describe("background error responses", () => {
 
   test("keeps automatic tab-frame detachments out of noisy background logs", () => {
     expect(shouldLogBackgroundMessageError(new Error("Frame with ID 0 was removed."))).toBe(false);
+    expect(shouldLogBackgroundMessageError(new Error("Codex temporarily lost its connection to this tab. Try the action once more."))).toBe(
+      false,
+    );
+  });
+
+  test("keeps expired OAuth sessions out of noisy background failure logs", () => {
+    expect(
+      shouldLogBackgroundMessageError(
+        new Error(
+          "Your access token could not be refreshed because you have since logged out or signed in to another account. Please sign in again.",
+        ),
+      ),
+    ).toBe(false);
   });
 
   test("keeps Chrome extensions gallery script restrictions out of noisy background logs", () => {

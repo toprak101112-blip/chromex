@@ -1502,7 +1502,7 @@ function resolvePlaywrightCacheRoots() {
   } else if (platform() === "linux") {
     roots.push(join(home, ".cache", "ms-playwright"));
   } else if (platform() === "win32") {
-    roots.push(join(home, "AppData", "Local", "ms-playwright"));
+    roots.push(join(readEnvValue(process.env, "LOCALAPPDATA") ?? join(home, "AppData", "Local"), "ms-playwright"));
   }
 
   return roots;
@@ -1535,12 +1535,17 @@ async function findSystemChromiumExecutable() {
     : platform() === "linux"
       ? ["/usr/bin/google-chrome-for-testing", "/usr/bin/chromium", "/usr/bin/chromium-browser"]
       : platform() === "win32"
-        ? [
-            join(readEnvValue(process.env, "ProgramFiles") ?? "C:\\Program Files", "Google", "Chrome for Testing", "Application", "chrome.exe"),
-            join(readEnvValue(process.env, "ProgramFiles") ?? "C:\\Program Files", "Chromium", "Application", "chrome.exe"),
-            join(readEnvValue(process.env, "ProgramFiles(x86)") ?? "C:\\Program Files (x86)", "Chromium", "Application", "chrome.exe"),
-          ]
-        : [];
+      ? [
+          join(readEnvValue(process.env, "LOCALAPPDATA") ?? join(homedir(), "AppData", "Local"), "Google", "Chrome", "Application", "chrome.exe"),
+          join(readEnvValue(process.env, "LOCALAPPDATA") ?? join(homedir(), "AppData", "Local"), "Google", "Chrome for Testing", "Application", "chrome.exe"),
+          join(readEnvValue(process.env, "ProgramFiles") ?? "C:\\Program Files", "Google", "Chrome", "Application", "chrome.exe"),
+          join(readEnvValue(process.env, "ProgramFiles") ?? "C:\\Program Files", "Google", "Chrome for Testing", "Application", "chrome.exe"),
+          join(readEnvValue(process.env, "ProgramFiles") ?? "C:\\Program Files", "Chromium", "Application", "chrome.exe"),
+          join(readEnvValue(process.env, "ProgramFiles(x86)") ?? "C:\\Program Files (x86)", "Google", "Chrome", "Application", "chrome.exe"),
+          join(readEnvValue(process.env, "ProgramFiles(x86)") ?? "C:\\Program Files (x86)", "Google", "Chrome for Testing", "Application", "chrome.exe"),
+          join(readEnvValue(process.env, "ProgramFiles(x86)") ?? "C:\\Program Files (x86)", "Chromium", "Application", "chrome.exe"),
+        ]
+      : [];
 
   for (const candidate of candidates) {
     try {

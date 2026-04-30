@@ -4,25 +4,15 @@
 [![License: MIT](https://img.shields.io/badge/license-MIT-blue.svg)](./LICENSE)
 [![GitHub stars](https://img.shields.io/github/stars/GENEXIS-AI/chromex?style=social)](https://github.com/GENEXIS-AI/chromex/stargazers)
 [![English](https://img.shields.io/badge/readme-English-111827.svg)](./README.md)
-[![한국어](https://img.shields.io/badge/readme-한국어-2563eb.svg)](./README.ko.md)
-[![日本語](https://img.shields.io/badge/readme-日本語-dc2626.svg)](./README.ja.md)
-[![简体中文](https://img.shields.io/badge/readme-简体中文-16a34a.svg)](./README.zh-CN.md)
+[![한국어](https://img.shields.io/badge/readme-한국어-2563eb.svg)](./readmes/README.ko.md)
+[![日本語](https://img.shields.io/badge/readme-日本語-dc2626.svg)](./readmes/README.ja.md)
+[![简体中文](https://img.shields.io/badge/readme-简体中文-16a34a.svg)](./readmes/README.zh-CN.md)
 
 Chromex is a Chrome MV3 side-panel assistant that connects Chrome to Codex through a local native bridge. It helps users work with the current page, selected tabs, uploaded files, voice input, images, and browser workflows while keeping credentials out of extension storage.
 
 Published by **GenexisAI CHOI**.
 
 ![Chromex browser side-panel assistant](./assets/chromex-hero.png)
-
-## Star History
-
-<a href="https://www.star-history.com/#GENEXIS-AI/chromex&Date">
-  <picture>
-    <source media="(prefers-color-scheme: dark)" srcset="https://api.star-history.com/svg?repos=GENEXIS-AI/chromex&type=Date&theme=dark" />
-    <source media="(prefers-color-scheme: light)" srcset="https://api.star-history.com/svg?repos=GENEXIS-AI/chromex&type=Date" />
-    <img alt="Star History Chart" src="https://api.star-history.com/svg?repos=GENEXIS-AI/chromex&type=Date" />
-  </picture>
-</a>
 
 ## What It Does
 
@@ -188,3 +178,13 @@ Chromex uses normal open-source release history from `0.1.1` onward. Versioning,
 ## License
 
 MIT. See [LICENSE](./LICENSE).
+
+## Star History
+
+<a href="https://www.star-history.com/#GENEXIS-AI/chromex&Date">
+  <picture>
+    <source media="(prefers-color-scheme: dark)" srcset="https://api.star-history.com/svg?repos=GENEXIS-AI/chromex&type=Date&theme=dark" />
+    <source media="(prefers-color-scheme: light)" srcset="https://api.star-history.com/svg?repos=GENEXIS-AI/chromex&type=Date" />
+    <img alt="Star History Chart" src="https://api.star-history.com/svg?repos=GENEXIS-AI/chromex&type=Date" />
+  </picture>
+</a>

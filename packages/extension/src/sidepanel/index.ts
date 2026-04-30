@@ -248,6 +248,7 @@ import {
   detectUiLocale,
   formatUiLanguageOptionLabel,
   getBrowserUiLanguage,
+  getTranslatedUiLocale,
   getUiStrings,
   isRtlUiLocale,
   listSupportedUiLanguageOptions,
@@ -3195,7 +3196,7 @@ function renderAuthOnboarding(
         <div class="auth-onboarding-install">
           <div class="auth-onboarding-install-title">${escapeHtml(strings.onboarding.installTitle)}</div>
           <p>${escapeHtml(strings.onboarding.installBody)}</p>
-          <code>${escapeHtml(strings.onboarding.sourceInstallCommand)}</code>
+          <code>${escapeHtml(getNativeHostInstallCommand(strings))}</code>
           <p>${escapeHtml(strings.onboarding.webOnlyUnavailable)}</p>
         </div>
         <div class="auth-onboarding-actions">
@@ -3221,6 +3222,27 @@ function renderAuthOnboarding(
       </div>
     </section>
   `;
+}
+
+function getNativeHostInstallCommand(strings: ReturnType<typeof getUiStrings>): string {
+  const extensionId = getCurrentExtensionId();
+  return formatNativeHostInstallCommand(strings.onboarding.sourceInstallCommand, extensionId);
+}
+
+function formatNativeHostInstallCommand(sourceInstallCommand: string, extensionId: string): string {
+  const [buildCommand, installCommand, ...extra] = sourceInstallCommand.split(" && ");
+  if (buildCommand && installCommand && extra.length === 0) {
+    return [buildCommand, `${installCommand}${extensionId ? ` ${extensionId}` : ""}`].join("\n");
+  }
+  return extensionId ? `${sourceInstallCommand} ${extensionId}` : sourceInstallCommand;
+}
+
+function getCurrentExtensionId(): string {
+  try {
+    return chrome.runtime?.id?.trim() ?? "";
+  } catch {
+    return "";
+  }
 }
 
 function renderAuthOnboardingRuntimeStep(
@@ -14650,11 +14672,19 @@ function toUserFacingRuntimeError(error: unknown, fallback?: string): string {
       return strings.errors.runtimeDisconnected;
     case "host-access":
       return strings.errors.pageAccess;
+    case "auth-expired":
+      return getAuthExpiredRuntimeErrorMessage();
     default: {
       const message = toErrorMessage(error).trim();
       return message || fallback || strings.errors.init;
     }
   }
+}
+
+function getAuthExpiredRuntimeErrorMessage(): string {
+  return getTranslatedUiLocale(state.uiLocale) === "ko"
+    ? "Codex 로그인이 만료되었거나 다른 계정으로 변경되었습니다. 계정에서 다시 로그인한 뒤 요청을 다시 시도해 주세요."
+    : "Your Codex login expired or changed to another account. Sign in again from Account, then retry the request.";
 }
 
 function toUserFacingVoiceStartError(error: unknown): string {

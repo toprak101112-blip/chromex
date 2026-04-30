@@ -47,7 +47,7 @@ console.log("");
 console.log("Loaded extension entries:");
 for (const match of matches) {
   const loadedPath = typeof match.path === "string" ? resolve(match.path) : "";
-  const pathMatches = loadedPath === expectedDist;
+  const pathMatches = sameLocalPath(loadedPath, expectedDist);
   console.log(`- ${match.profile}`);
   console.log(`  id: ${match.id}`);
   console.log(`  state: ${match.state ?? "unknown"}`);
@@ -55,7 +55,7 @@ for (const match of matches) {
   console.log(`  path matches current dist: ${pathMatches ? "yes" : "no"}`);
 }
 
-if (matches.some((match) => resolve(String(match.path ?? "")) !== expectedDist)) {
+if (matches.some((match) => !sameLocalPath(resolve(String(match.path ?? "")), expectedDist))) {
   console.log("");
   console.log(
     syncLoadedPath
@@ -160,6 +160,17 @@ function dedupeEntries(entries) {
     seen.add(key);
     return true;
   });
+}
+
+function sameLocalPath(left, right) {
+  const normalizedLeft = normalizeLocalPathForComparison(left);
+  const normalizedRight = normalizeLocalPathForComparison(right);
+  return normalizedLeft === normalizedRight;
+}
+
+function normalizeLocalPathForComparison(value) {
+  const normalized = resolve(String(value || "")).replace(/\\/gu, "/");
+  return platform() === "win32" ? normalized.toLowerCase() : normalized;
 }
 
 async function readJsonFile(path) {

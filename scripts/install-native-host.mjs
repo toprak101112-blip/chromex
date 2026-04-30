@@ -12,7 +12,7 @@ const LEGACY_EXTENSION_IDS = [
   "jmghgkadlfpclhehodncahidegjdegpk",
   "mfolnhbpfojdlkajoenkhlhibpkdkfjd",
 ];
-const extensionIdArg = process.argv.slice(2).find((arg) => !arg.startsWith("--"));
+const extensionIdArg = normalizeCliValue(process.argv.slice(2).find((arg) => !arg.startsWith("--")));
 const profileDirArg = process.argv.find((arg) => arg.startsWith("--profile-dir="));
 const browserArg = process.argv.find((arg) => arg.startsWith("--browser="));
 const includeLegacyExtensionIds = process.argv.includes("--include-legacy-extension-ids");
@@ -38,7 +38,7 @@ if (!extensionId || !isValidExtensionId(extensionId)) {
   process.exit(1);
 }
 
-const selectedBrowsers = parseSelectedBrowsers(browserArg?.slice("--browser=".length));
+const selectedBrowsers = parseSelectedBrowsers(normalizeCliValue(browserArg?.slice("--browser=".length)));
 assertSelectedBrowsersSupportedOnPlatform(selectedBrowsers, currentPlatform);
 const appSupportDir = resolveAppSupportDir(currentPlatform);
 const hostInstallDir = resolve(appSupportDir, "native-host");
@@ -47,17 +47,18 @@ const bridgeEntryPath = resolve(repoRoot, "packages/bridge/dist/cli.js");
 const hostPath = resolve(hostInstallDir, "bin.js");
 const launcherPath = resolve(hostInstallDir, currentPlatform === "win32" ? "run-bridge.cmd" : "run-bridge");
 const homeDir = homedir();
+const profileDir = normalizeCliValue(profileDirArg?.slice("--profile-dir=".length));
 const targets = resolveInstallTargets({
   platformFamily: currentPlatform,
   homeDir,
   appSupportDir,
   selectedBrowsers,
-  profileDir: profileDirArg ? profileDirArg.slice("--profile-dir=".length) : null,
+  profileDir: profileDir || null,
 });
 const discoveredExtensionIds = await discoverCompatibleExtensionIds({
   platformFamily: currentPlatform,
   homeDir,
-  profileDir: profileDirArg ? profileDirArg.slice("--profile-dir=".length) : null,
+  profileDir: profileDir || null,
   candidatePaths: collectExtensionPathCandidates({ repoRoot, homeDir }),
 });
 const allowedExtensionIds = [
@@ -136,6 +137,23 @@ console.log("No API key was copied during installation. ChatGPT login remains th
 
 function isValidExtensionId(value) {
   return /^[a-p]{32}$/u.test(value);
+}
+
+function normalizeCliValue(value) {
+  const normalized = stripWrappingQuotes(value?.trim() ?? "");
+  return normalized || undefined;
+}
+
+function stripWrappingQuotes(value) {
+  let normalized = value.trim();
+  while (
+    normalized.length >= 2 &&
+    ((normalized.startsWith("\"") && normalized.endsWith("\"")) ||
+      (normalized.startsWith("'") && normalized.endsWith("'")))
+  ) {
+    normalized = normalized.slice(1, -1).trim();
+  }
+  return normalized;
 }
 
 function parseSelectedBrowsers(rawValue) {
@@ -454,11 +472,12 @@ function isMatchingSidepanelExtension(id, entry, candidatePaths) {
   }
 
   const extensionPath = typeof entry.path === "string" ? resolve(entry.path) : null;
+  const normalizedCandidatePaths = new Set([...candidatePaths].map((path) => normalizePathForComparison(path)));
   const permissions = getExtensionPermissions(entry);
   const commands = typeof entry.commands === "object" && entry.commands ? Object.keys(entry.commands) : [];
   const extensionBasename = extensionPath ? basename(extensionPath) : "";
 
-  if (extensionPath && candidatePaths.has(extensionPath)) {
+  if (extensionPath && normalizedCandidatePaths.has(normalizePathForComparison(extensionPath))) {
     return true;
   }
 
@@ -479,7 +498,7 @@ function isMatchingSidepanelExtension(id, entry, candidatePaths) {
 }
 
 function normalizePathForComparison(value) {
-  return value.replace(/\\/gu, "/");
+  return value.replace(/\\/gu, "/").toLowerCase();
 }
 
 function getExtensionPermissions(entry) {
@@ -499,12 +518,27 @@ async function writeLauncher({
   bridgeEntryPath,
 }) {
   const nodeDir = dirname(process.execPath);
+  const windowsPath = [
+    nodeDir,
+    "%APPDATA%\\npm",
+    "%LOCALAPPDATA%\\Programs\\Codex",
+    "%LOCALAPPDATA%\\pnpm",
+    "%PNPM_HOME%",
+    "%VOLTA_HOME%\\bin",
+    "%USERPROFILE%\\.volta\\bin",
+    "%BUN_INSTALL%\\bin",
+    "%USERPROFILE%\\.bun\\bin",
+    "%USERPROFILE%\\.local\\bin",
+    "%USERPROFILE%\\scoop\\shims",
+    "%LOCALAPPDATA%\\Microsoft\\WindowsApps",
+    "%PATH%",
+  ].join(";");
   const launcherBody =
     platformFamily === "win32"
       ? [
           "@echo off",
           `set "BRIDGE_ENTRY=${bridgeEntryPath}"`,
-          `set "PATH=${nodeDir};%APPDATA%\\npm;%LOCALAPPDATA%\\Programs\\Codex;%USERPROFILE%\\scoop\\shims;%PATH%"`,
+          `set "PATH=${windowsPath}"`,
           `"${process.execPath}" "${hostPath}" %*`,
           "",
         ].join("\r\n")

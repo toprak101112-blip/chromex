@@ -2784,9 +2784,21 @@ async function installImagePromptHoverForTab(
   if (!tab?.id || !tab.url || !getCurrentPageSupport(tab.url).available) {
     return { ok: true, installed: false };
   }
-  await sendMessageToTab(tab as chrome.tabs.Tab & { id: number; url: string }, {
-    type: "page.image-prompt-hover.install",
-  });
+  try {
+    await sendMessageToTab(tab as chrome.tabs.Tab & { id: number; url: string }, {
+      type: "page.image-prompt-hover.install",
+    });
+  } catch (error) {
+    if (isRetryableRuntimeMessageError(error)) {
+      void recordDiagnostic("extension.image_prompt.hover_install.transient_disconnect", {
+        tabId: tab.id,
+        url: tab.url,
+        error: toErrorMessage(error),
+      });
+      return { ok: true, installed: false };
+    }
+    throw error;
+  }
   return { ok: true, installed: true };
 }
 
@@ -4300,7 +4312,19 @@ function createFallbackRuntimeConfig(settings: ExtensionSettings): RuntimeConfig
 }
 
 function normalizeConfiguredPath(value: string | undefined): string {
-  return value?.trim() ?? "";
+  return stripConfiguredPathQuotes(value?.trim() ?? "");
+}
+
+function stripConfiguredPathQuotes(value: string): string {
+  let normalized = value.trim();
+  while (
+    normalized.length >= 2 &&
+    ((normalized.startsWith("\"") && normalized.endsWith("\"")) ||
+      (normalized.startsWith("'") && normalized.endsWith("'")))
+  ) {
+    normalized = normalized.slice(1, -1).trim();
+  }
+  return normalized;
 }
 
 function resolveSettingsUiLocale(settings: Pick<ExtensionSettings, "uiLanguage">): string {

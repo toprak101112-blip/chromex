@@ -1,6 +1,6 @@
 import { spawn } from "node:child_process";
 import { copyFile, mkdir, open, readFile, readdir, rm, stat, writeFile, mkdtemp } from "node:fs/promises";
-import { tmpdir } from "node:os";
+import { homedir, tmpdir } from "node:os";
 import { dirname, extname, join, resolve } from "node:path";
 import { randomUUID } from "node:crypto";
 import type { ImageAssetFolderSnapshot } from "@codex-sidepanel/shared";
@@ -332,7 +332,8 @@ export class BridgeImageAssetStore {
 
   async #resolveConfiguredOutputDir(): Promise<string> {
     const value = typeof this.#outputDir === "function" ? await this.#outputDir() : this.#outputDir;
-    return value?.trim() ? resolve(value.trim()) : "";
+    const normalized = expandConfiguredLocalPath(value);
+    return normalized ? resolve(normalized) : "";
   }
 
   async #writeBase64Asset(prefix: "generated" | "input", base64: string, mimeType: string): Promise<string> {
@@ -401,7 +402,7 @@ export function extensionToMimeType(filePath: string): string {
 }
 
 export function resolveGeneratedImageOutputDir(workspaceRoot?: string | null): string {
-  const normalizedWorkspaceRoot = workspaceRoot?.trim();
+  const normalizedWorkspaceRoot = expandConfiguredLocalPath(workspaceRoot);
   if (normalizedWorkspaceRoot) {
     return join(normalizedWorkspaceRoot, ".codex-sidepanel", "generated-images");
   }
@@ -428,6 +429,48 @@ function mimeTypeToExtension(mimeType: string): string {
 
 function isImageAssetFileName(fileName: string): boolean {
   return /^(generated|input)-.+\.(?:png|jpe?g|webp|gif)$/iu.test(fileName);
+}
+
+function expandConfiguredLocalPath(value: string | null | undefined): string {
+  let expanded = stripWrappingQuotes(value?.trim() ?? "");
+  if (!expanded) {
+    return "";
+  }
+
+  const homeDirectory = homedir();
+  if (expanded === "~" || expanded.startsWith("~/") || expanded.startsWith("~\\")) {
+    expanded = `${homeDirectory}${expanded.slice(1)}`;
+  }
+
+  expanded = expanded.replace(/%([^%]+)%/gu, (match, key: string) => readEnvValue(process.env, key) ?? match);
+  expanded = expanded.replace(/\$env:([A-Za-z_][A-Za-z0-9_]*)/giu, (match, key: string) =>
+    readEnvValue(process.env, key) ?? match,
+  );
+  return stripWrappingQuotes(expanded);
+}
+
+function stripWrappingQuotes(value: string): string {
+  let normalized = value.trim();
+  while (
+    normalized.length >= 2 &&
+    ((normalized.startsWith("\"") && normalized.endsWith("\"")) ||
+      (normalized.startsWith("'") && normalized.endsWith("'")))
+  ) {
+    normalized = normalized.slice(1, -1).trim();
+  }
+  return normalized;
+}
+
+function readEnvValue(env: NodeJS.ProcessEnv, key: string): string | undefined {
+  const exactValue = env[key];
+  if (typeof exactValue === "string") {
+    return exactValue;
+  }
+
+  const normalizedKey = key.toLowerCase();
+  const actualKey = Object.keys(env).find((candidate) => candidate.toLowerCase() === normalizedKey);
+  const value = actualKey ? env[actualKey] : undefined;
+  return typeof value === "string" ? value : undefined;
 }
 
 function isManifestPayload(value: unknown): value is {

@@ -131,9 +131,11 @@ describe("online image prompt extraction", () => {
 
   test("removes stale hover buttons from the page instead of leaving hidden DOM behind", () => {
     expect(contentSource).toContain("function removeImagePromptHoverButtons");
+    expect(contentSource).toContain("function safeRemoveElement");
+    expect(contentSource).toContain('error.name === "NotFoundError"');
     expect(contentSource).toContain("removeImagePromptHoverButtons(button)");
     expect(contentSource).toContain("removeImagePromptHoverButtons(imagePromptHoverButton)");
-    expect(contentSource).toContain("button.remove()");
+    expect(contentSource).toContain("safeRemoveElement(button)");
     expect(contentSource).not.toContain('document.addEventListener("pointerleave"');
     expect(contentSource).not.toContain('document.addEventListener("mouseleave"');
     expect(contentSource).toContain('window.addEventListener("blur", handleImagePromptForceHide, listenerOptions)');
@@ -172,6 +174,8 @@ describe("online image prompt extraction", () => {
     expect(runtimeCase).toContain("sendResponse(await installImagePromptHoverForTab");
     expect(backgroundInstaller).toContain("return { ok: true, installed: false }");
     expect(backgroundInstaller).toContain("await sendMessageToTab");
+    expect(backgroundInstaller).toContain("isRetryableRuntimeMessageError(error)");
+    expect(backgroundInstaller).toContain("extension.image_prompt.hover_install.transient_disconnect");
     expect(backgroundInstaller).toContain("return { ok: true, installed: true }");
     expect(backgroundInstaller).not.toContain(".catch(() => undefined)");
     expect(sidepanelInstaller).toContain("getPermissionRequestForRuntimeResponse(response)");

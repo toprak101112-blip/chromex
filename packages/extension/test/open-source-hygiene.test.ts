@@ -39,17 +39,21 @@ describe("open-source repository hygiene", () => {
   test("keeps public readmes user-facing without exposing store packaging commands", () => {
     const publicReleaseScript = readRepoFile("scripts/package-public-release.mjs");
     const readme = readRepoFile("README.md");
-    const koreanReadme = readRepoFile("README.ko.md");
-    const japaneseReadme = readRepoFile("README.ja.md");
-    const chineseReadme = readRepoFile("README.zh-CN.md");
+    const koreanReadme = readRepoFile("readmes/README.ko.md");
+    const japaneseReadme = readRepoFile("readmes/README.ja.md");
+    const chineseReadme = readRepoFile("readmes/README.zh-CN.md");
     const publicReadmes = [readme, koreanReadme, japaneseReadme, chineseReadme];
 
     expect(publicReleaseScript).toContain("/^docs\\//u");
+    expect(readme).toContain("./readmes/README.ko.md");
+    expect(readme).toContain("./readmes/README.ja.md");
+    expect(readme).toContain("./readmes/README.zh-CN.md");
     for (const publicReadme of publicReadmes) {
-      expect(publicReadme).toContain("./assets/chromex-hero.png");
+      expect(publicReadme).toContain("assets/chromex-hero.png");
       expect(publicReadme).toContain("releases/latest/download/chromex-unpacked-extension.zip");
       expect(publicReadme).toContain("README.ja.md");
       expect(publicReadme).toContain("README.zh-CN.md");
+      expect(publicReadme.trim().endsWith("</a>")).toBe(true);
       expect(publicReadme).toContain("install-native-host.mjs <extension-id> --browser=chrome");
       expect(publicReadme).toContain("menmlhahmendmkiicbjihgjhppkgaeom");
       expect(publicReadme).toContain("npm install -g @openai/codex");
@@ -92,9 +96,9 @@ describe("open-source repository hygiene", () => {
 
   test("keeps private maintainer rules out of public-facing documents", () => {
     const readme = readRepoFile("README.md");
-    const koreanReadme = readRepoFile("README.ko.md");
-    const japaneseReadme = readRepoFile("README.ja.md");
-    const chineseReadme = readRepoFile("README.zh-CN.md");
+    const koreanReadme = readRepoFile("readmes/README.ko.md");
+    const japaneseReadme = readRepoFile("readmes/README.ja.md");
+    const chineseReadme = readRepoFile("readmes/README.zh-CN.md");
     const publicReleaseScript = readRepoFile("scripts/package-public-release.mjs");
 
     expect(publicReleaseScript).toContain("(?:CODEX|CLAUDE|AGENTS|GEMINI|MEMORY)");

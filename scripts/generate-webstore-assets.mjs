@@ -757,11 +757,15 @@ function browserExecutableCandidates() {
     ];
   }
   if (currentPlatform === "win32") {
+    const localAppData = readEnvValue(process.env, "LOCALAPPDATA") ?? join(homedir(), "AppData", "Local");
     return [
+      join(localAppData, "Google", "Chrome", "Application", "chrome.exe"),
+      join(localAppData, "Google", "Chrome for Testing", "Application", "chrome.exe"),
       join(readEnvValue(process.env, "ProgramFiles") ?? "C:\\Program Files", "Google", "Chrome", "Application", "chrome.exe"),
       join(readEnvValue(process.env, "ProgramFiles") ?? "C:\\Program Files", "Google", "Chrome for Testing", "Application", "chrome.exe"),
       join(readEnvValue(process.env, "ProgramFiles") ?? "C:\\Program Files", "Chromium", "Application", "chrome.exe"),
       join(readEnvValue(process.env, "ProgramFiles(x86)") ?? "C:\\Program Files (x86)", "Google", "Chrome", "Application", "chrome.exe"),
+      join(readEnvValue(process.env, "ProgramFiles(x86)") ?? "C:\\Program Files (x86)", "Google", "Chrome for Testing", "Application", "chrome.exe"),
       join(readEnvValue(process.env, "ProgramFiles(x86)") ?? "C:\\Program Files (x86)", "Chromium", "Application", "chrome.exe"),
     ];
   }

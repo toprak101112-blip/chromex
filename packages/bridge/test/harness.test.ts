@@ -139,6 +139,47 @@ describe("BridgeHarnessRuntime", () => {
     expect(env.CODEX_SIDEPANEL_HOME).toBe("/home/user/.codex-sidepanel");
     expect(env.OPENAI_API_KEY).toBeUndefined();
   });
+
+  test("normalizes quoted and environment-based workspace roots", async () => {
+    const workspaceRoot = await createTempDir("quoted-workspace");
+    const userRoot = await createTempDir("quoted-user");
+    const quotedRuntime = new BridgeHarnessRuntime({
+      workspaceRoot: `"${workspaceRoot}"`,
+      userRoot: `"${userRoot}"`,
+    });
+
+    expect(await quotedRuntime.getWorkspaceRoot()).toBe(workspaceRoot);
+    expect(quotedRuntime.resolveUserPath("settings.json")).toBe(join(userRoot, "settings.json"));
+
+    const previousEnv = process.env.CODEX_TEST_WORKSPACE_ROOT;
+    const previousUserEnv = process.env.CODEX_TEST_USER_ROOT;
+    process.env.CODEX_TEST_WORKSPACE_ROOT = workspaceRoot;
+    process.env.CODEX_TEST_USER_ROOT = userRoot;
+    try {
+      const percentEnvRuntime = new BridgeHarnessRuntime({
+        workspaceRoot: "%CODEX_TEST_WORKSPACE_ROOT%",
+        userRoot: "%CODEX_TEST_USER_ROOT%",
+      });
+      expect(await percentEnvRuntime.getWorkspaceRoot()).toBe(workspaceRoot);
+      expect(percentEnvRuntime.resolveUserPath("settings.json")).toBe(join(userRoot, "settings.json"));
+
+      await percentEnvRuntime.configure({
+        workspaceRoot: "'$env:CODEX_TEST_WORKSPACE_ROOT'",
+      });
+      expect(await percentEnvRuntime.getWorkspaceRoot()).toBe(workspaceRoot);
+    } finally {
+      if (previousEnv === undefined) {
+        delete process.env.CODEX_TEST_WORKSPACE_ROOT;
+      } else {
+        process.env.CODEX_TEST_WORKSPACE_ROOT = previousEnv;
+      }
+      if (previousUserEnv === undefined) {
+        delete process.env.CODEX_TEST_USER_ROOT;
+      } else {
+        process.env.CODEX_TEST_USER_ROOT = previousUserEnv;
+      }
+    }
+  });
 });
 
 async function createTempDir(prefix: string): Promise<string> {

@@ -107,13 +107,26 @@ export class NativeHostRelay {
   }
 
   #resolveBridgeEntry(): string {
-    if (process.env.BRIDGE_ENTRY) {
-      return process.env.BRIDGE_ENTRY;
+    const configuredBridgeEntry = normalizeNativeHostPath(process.env.BRIDGE_ENTRY ?? "");
+    if (configuredBridgeEntry) {
+      return configuredBridgeEntry;
     }
 
     const currentDir = dirname(fileURLToPath(import.meta.url));
     return resolve(currentDir, "../../bridge/dist/cli.js");
   }
+}
+
+export function normalizeNativeHostPath(value: string): string {
+  let normalized = value.trim();
+  while (
+    normalized.length >= 2 &&
+    ((normalized.startsWith("\"") && normalized.endsWith("\"")) ||
+      (normalized.startsWith("'") && normalized.endsWith("'")))
+  ) {
+    normalized = normalized.slice(1, -1).trim();
+  }
+  return normalized;
 }
 
 function isBrokenPipeError(error: unknown): boolean {

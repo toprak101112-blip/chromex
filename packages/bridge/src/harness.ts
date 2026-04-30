@@ -69,7 +69,7 @@ export class BridgeHarnessRuntime {
 
   constructor(options: { workspaceRoot?: string; userRoot?: string } = {}) {
     this.#workspaceRoot = normalizeWorkspaceRoot(options.workspaceRoot ?? process.env.CODEX_SIDEPANEL_WORKSPACE ?? "");
-    this.#userRoot = options.userRoot ?? process.env.CODEX_SIDEPANEL_HOME ?? resolveCodexSidepanelConfigDir();
+    this.#userRoot = normalizeUserRoot(options.userRoot ?? process.env.CODEX_SIDEPANEL_HOME);
   }
 
   async getWorkspaceRoot(): Promise<string> {
@@ -498,7 +498,55 @@ function resolveHookEventNames(eventName: BridgeHookEventName): BridgeHookEventN
 }
 
 function normalizeWorkspaceRoot(value: string | null | undefined): string {
-  return value?.trim() ? resolve(value.trim()) : "";
+  const normalized = expandConfiguredLocalPath(value);
+  return normalized ? resolve(normalized) : "";
+}
+
+function normalizeUserRoot(value: string | null | undefined): string {
+  const normalized = expandConfiguredLocalPath(value);
+  return normalized ? resolve(normalized) : resolveCodexSidepanelConfigDir();
+}
+
+function expandConfiguredLocalPath(value: string | null | undefined): string {
+  let expanded = stripWrappingQuotes(value?.trim() ?? "");
+  if (!expanded) {
+    return "";
+  }
+
+  const homeDirectory = homedir();
+  if (expanded === "~" || expanded.startsWith("~/") || expanded.startsWith("~\\")) {
+    expanded = `${homeDirectory}${expanded.slice(1)}`;
+  }
+
+  expanded = expanded.replace(/%([^%]+)%/gu, (match, key: string) => readEnvValue(process.env, key) ?? match);
+  expanded = expanded.replace(/\$env:([A-Za-z_][A-Za-z0-9_]*)/giu, (match, key: string) =>
+    readEnvValue(process.env, key) ?? match,
+  );
+  return stripWrappingQuotes(expanded);
+}
+
+function stripWrappingQuotes(value: string): string {
+  let normalized = value.trim();
+  while (
+    normalized.length >= 2 &&
+    ((normalized.startsWith("\"") && normalized.endsWith("\"")) ||
+      (normalized.startsWith("'") && normalized.endsWith("'")))
+  ) {
+    normalized = normalized.slice(1, -1).trim();
+  }
+  return normalized;
+}
+
+function readEnvValue(env: NodeJS.ProcessEnv, key: string): string | undefined {
+  const exactValue = env[key];
+  if (typeof exactValue === "string") {
+    return exactValue;
+  }
+
+  const normalizedKey = key.toLowerCase();
+  const actualKey = Object.keys(env).find((candidate) => candidate.toLowerCase() === normalizedKey);
+  const value = actualKey ? env[actualKey] : undefined;
+  return typeof value === "string" ? value : undefined;
 }
 
 function humanizeCommandName(value: string): string {

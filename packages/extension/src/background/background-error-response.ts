@@ -3,7 +3,7 @@ import {
   type BrowserPermissionRequiredError,
 } from "../browser-permission-errors.js";
 import { isSitePermissionRequiredError, type SitePermissionRequiredError } from "../page-access.js";
-import { isRetryableRuntimeMessageError } from "../runtime-errors.js";
+import { classifyRuntimeMessageError, isRetryableRuntimeMessageError } from "../runtime-errors.js";
 
 export type ExpectedPermissionError = BrowserPermissionRequiredError | SitePermissionRequiredError;
 
@@ -32,6 +32,9 @@ export function shouldLogBackgroundMessageError(error: unknown): boolean {
     return false;
   }
   if (isRetryableRuntimeMessageError(error)) {
+    return false;
+  }
+  if (classifyRuntimeMessageError(error) === "auth-expired") {
     return false;
   }
 

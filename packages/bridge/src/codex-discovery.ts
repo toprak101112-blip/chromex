@@ -23,8 +23,8 @@ export async function resolveCodexCommand(options: {
   isDirectory?: (path: string) => Promise<boolean>;
 } = {}): Promise<CodexCommandResolution> {
   const env = options.env ?? process.env;
-  const configuredCommand = options.configuredCommand?.trim() ?? "";
-  const envCommand = (options.envCommand ?? readEnvValue(env, "CODEX_BIN") ?? "").trim();
+  const configuredCommand = normalizeCommandCandidate(options.configuredCommand ?? "");
+  const envCommand = normalizeCommandCandidate(options.envCommand ?? readEnvValue(env, "CODEX_BIN") ?? "");
   const pathValue = options.pathValue ?? readEnvValue(env, "PATH") ?? "";
   const homeDirectory = options.homeDirectory ?? homedir();
   const platformName = options.platformName ?? platform();
@@ -124,7 +124,7 @@ async function findExecutable(
     isDirectory: (path: string) => Promise<boolean>;
   },
 ): Promise<string | null> {
-  const trimmed = expandPathCandidate(candidate.trim(), options);
+  const trimmed = expandPathCandidate(candidate, options);
   const pathApi = getPathApi(options.platformName);
   const pathDelimiter = options.platformName === "win32" ? ";" : ":";
   if (!trimmed) {
@@ -133,8 +133,10 @@ async function findExecutable(
 
   if (looksLikePath(trimmed, options.platformName)) {
     const absoluteCandidate = pathApi.isAbsolute(trimmed) ? trimmed : pathApi.resolve(trimmed);
-    if (await options.isExecutable(absoluteCandidate)) {
-      return absoluteCandidate;
+    for (const variant of commandVariants(absoluteCandidate, options.platformName)) {
+      if (await options.isExecutable(variant)) {
+        return variant;
+      }
     }
     if (await options.isDirectory(absoluteCandidate)) {
       for (const variant of commandVariants("codex", options.platformName)) {
@@ -147,7 +149,11 @@ async function findExecutable(
     return null;
   }
 
-  for (const pathEntry of options.pathValue.split(pathDelimiter).filter(Boolean)) {
+  for (const rawPathEntry of options.pathValue.split(pathDelimiter).filter(Boolean)) {
+    const pathEntry = expandPathCandidate(rawPathEntry, options);
+    if (!pathEntry) {
+      continue;
+    }
     for (const variant of commandVariants(trimmed, options.platformName)) {
       const absoluteCandidate = pathApi.join(pathEntry, variant);
       if (await options.isExecutable(absoluteCandidate)) {
@@ -169,11 +175,27 @@ function commandVariants(command: string, platformName: NodeJS.Platform): string
   }
 
   const lower = command.toLowerCase();
-  if (lower.endsWith(".exe") || lower.endsWith(".cmd") || lower.endsWith(".bat")) {
+  if (lower.endsWith(".exe") || lower.endsWith(".cmd") || lower.endsWith(".bat") || lower.endsWith(".com")) {
     return [command];
   }
 
-  return [command, `${command}.exe`, `${command}.cmd`, `${command}.bat`];
+  return [`${command}.exe`, `${command}.cmd`, `${command}.bat`, `${command}.com`];
+}
+
+function normalizeCommandCandidate(value: string): string {
+  return stripWrappingQuotes(value.trim());
+}
+
+function stripWrappingQuotes(value: string): string {
+  let normalized = value.trim();
+  while (
+    normalized.length >= 2 &&
+    ((normalized.startsWith("\"") && normalized.endsWith("\"")) ||
+      (normalized.startsWith("'") && normalized.endsWith("'")))
+  ) {
+    normalized = normalized.slice(1, -1).trim();
+  }
+  return normalized;
 }
 
 function commonCodexCandidates(
@@ -184,10 +206,14 @@ function commonCodexCandidates(
   if (platformName === "win32") {
     const localAppData = readEnvValue(env, "LOCALAPPDATA") || win32.resolve(homeDirectory, "AppData", "Local");
     const appData = readEnvValue(env, "APPDATA") || win32.resolve(homeDirectory, "AppData", "Roaming");
+    const userProfile = readEnvValue(env, "USERPROFILE") || homeDirectory;
     const fallbackLocalAppData = win32.resolve(homeDirectory, "AppData", "Local");
     const fallbackAppData = win32.resolve(homeDirectory, "AppData", "Roaming");
     const programFiles = readEnvValue(env, "ProgramFiles");
     const programFilesX86 = readEnvValue(env, "ProgramFiles(x86)");
+    const pnpmHome = readEnvValue(env, "PNPM_HOME") || win32.resolve(localAppData, "pnpm");
+    const voltaHome = readEnvValue(env, "VOLTA_HOME") || win32.resolve(userProfile, ".volta");
+    const bunInstall = readEnvValue(env, "BUN_INSTALL") || win32.resolve(userProfile, ".bun");
     return dedupeCandidates([
       win32.resolve(localAppData, "Programs", "Codex", "codex.exe"),
       win32.resolve(appData, "npm", "codex.cmd"),
@@ -195,7 +221,23 @@ function commonCodexCandidates(
       win32.resolve(fallbackLocalAppData, "Programs", "Codex", "codex.exe"),
       win32.resolve(fallbackAppData, "npm", "codex.cmd"),
       win32.resolve(fallbackAppData, "npm", "codex.exe"),
+      win32.resolve(pnpmHome, "codex.cmd"),
+      win32.resolve(pnpmHome, "codex.exe"),
+      win32.resolve(localAppData, "pnpm", "codex.cmd"),
+      win32.resolve(localAppData, "pnpm", "codex.exe"),
+      win32.resolve(voltaHome, "bin", "codex.cmd"),
+      win32.resolve(voltaHome, "bin", "codex.exe"),
+      win32.resolve(userProfile, ".volta", "bin", "codex.cmd"),
+      win32.resolve(userProfile, ".volta", "bin", "codex.exe"),
+      win32.resolve(bunInstall, "bin", "codex.cmd"),
+      win32.resolve(bunInstall, "bin", "codex.exe"),
+      win32.resolve(userProfile, ".bun", "bin", "codex.cmd"),
+      win32.resolve(userProfile, ".bun", "bin", "codex.exe"),
+      win32.resolve(userProfile, ".local", "bin", "codex.cmd"),
+      win32.resolve(userProfile, ".local", "bin", "codex.exe"),
       win32.resolve(homeDirectory, "scoop", "shims", "codex.cmd"),
+      win32.resolve(userProfile, "scoop", "shims", "codex.cmd"),
+      win32.resolve(localAppData, "Microsoft", "WindowsApps", "codex.exe"),
       ...(programFiles ? [win32.resolve(programFiles, "Codex", "codex.exe")] : []),
       ...(programFilesX86 ? [win32.resolve(programFilesX86, "Codex", "codex.exe")] : []),
     ]);
@@ -230,7 +272,7 @@ function expandPathCandidate(
     platformName: NodeJS.Platform;
   },
 ): string {
-  let expanded = value;
+  let expanded = normalizeCommandCandidate(value);
 
   if (expanded === "~" || expanded.startsWith("~/") || expanded.startsWith("~\\")) {
     expanded = `${options.homeDirectory}${expanded.slice(1)}`;
@@ -243,7 +285,7 @@ function expandPathCandidate(
     );
   }
 
-  return expanded;
+  return normalizeCommandCandidate(expanded);
 }
 
 function readEnvValue(env: NodeJS.ProcessEnv, key: string): string | undefined {

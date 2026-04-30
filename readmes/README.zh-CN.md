@@ -1,9 +1,9 @@
 # Chromex
 
 [![CI](https://github.com/GENEXIS-AI/chromex/actions/workflows/ci.yml/badge.svg)](https://github.com/GENEXIS-AI/chromex/actions/workflows/ci.yml)
-[![License: MIT](https://img.shields.io/badge/license-MIT-blue.svg)](./LICENSE)
+[![License: MIT](https://img.shields.io/badge/license-MIT-blue.svg)](../LICENSE)
 [![GitHub stars](https://img.shields.io/github/stars/GENEXIS-AI/chromex?style=social)](https://github.com/GENEXIS-AI/chromex/stargazers)
-[![English](https://img.shields.io/badge/readme-English-111827.svg)](./README.md)
+[![English](https://img.shields.io/badge/readme-English-111827.svg)](../README.md)
 [![한국어](https://img.shields.io/badge/readme-한국어-2563eb.svg)](./README.ko.md)
 [![日本語](https://img.shields.io/badge/readme-日本語-dc2626.svg)](./README.ja.md)
 [![简体中文](https://img.shields.io/badge/readme-简体中文-16a34a.svg)](./README.zh-CN.md)
@@ -12,17 +12,8 @@ Chromex 是一个 Chrome MV3 侧边栏助手，通过本地 native bridge 将 Ch
 
 Published by **GenexisAI CHOI**.
 
-![Chromex browser side-panel assistant](./assets/chromex-hero.png)
+![Chromex browser side-panel assistant](../assets/chromex-hero.png)
 
-## Star History
-
-<a href="https://www.star-history.com/#GENEXIS-AI/chromex&Date">
-  <picture>
-    <source media="(prefers-color-scheme: dark)" srcset="https://api.star-history.com/svg?repos=GENEXIS-AI/chromex&type=Date&theme=dark" />
-    <source media="(prefers-color-scheme: light)" srcset="https://api.star-history.com/svg?repos=GENEXIS-AI/chromex&type=Date" />
-    <img alt="Star History Chart" src="https://api.star-history.com/svg?repos=GENEXIS-AI/chromex&type=Date" />
-  </picture>
-</a>
 
 ## 功能概览
 
@@ -129,7 +120,7 @@ Chromex 默认自动跟随浏览器语言。用户也可以在 **Settings > Gene
 - Native host 子进程和 workspace hooks 使用收窄的环境变量 allowlist 运行。
 - 生成图片原始文件、临时上传和诊断信息由本地 bridge 处理。
 
-发布或部署修改后的构建前，请阅读 [SECURITY.md](./SECURITY.md) 和 [PRIVACY.md](./PRIVACY.md)。
+发布或部署修改后的构建前，请阅读 [SECURITY.md](../SECURITY.md) 和 [PRIVACY.md](../PRIVACY.md)。
 
 ## 特性
 
@@ -175,7 +166,7 @@ packages/extension/dist
 
 ## 发布管理
 
-Chromex 从 `0.1.1` 开始使用普通开源发布历史。版本策略、pull request 流程和发布检查清单见 [RELEASE.md](./RELEASE.md)。
+Chromex 从 `0.1.1` 开始使用普通开源发布历史。版本策略、pull request 流程和发布检查清单见 [RELEASE.md](../RELEASE.md)。
 
 ## 故障排查
 
@@ -187,4 +178,14 @@ Chromex 从 `0.1.1` 开始使用普通开源发布历史。版本策略、pull r
 
 ## 许可证
 
-MIT. 见 [LICENSE](./LICENSE)。
+MIT. 见 [LICENSE](../LICENSE)。
+
+## Star History
+
+<a href="https://www.star-history.com/#GENEXIS-AI/chromex&Date">
+  <picture>
+    <source media="(prefers-color-scheme: dark)" srcset="https://api.star-history.com/svg?repos=GENEXIS-AI/chromex&type=Date&theme=dark" />
+    <source media="(prefers-color-scheme: light)" srcset="https://api.star-history.com/svg?repos=GENEXIS-AI/chromex&type=Date" />
+    <img alt="Star History Chart" src="https://api.star-history.com/svg?repos=GENEXIS-AI/chromex&type=Date" />
+  </picture>
+</a>

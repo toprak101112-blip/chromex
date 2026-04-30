@@ -1,9 +1,9 @@
 # Chromex
 
 [![CI](https://github.com/GENEXIS-AI/chromex/actions/workflows/ci.yml/badge.svg)](https://github.com/GENEXIS-AI/chromex/actions/workflows/ci.yml)
-[![License: MIT](https://img.shields.io/badge/license-MIT-blue.svg)](./LICENSE)
+[![License: MIT](https://img.shields.io/badge/license-MIT-blue.svg)](../LICENSE)
 [![GitHub stars](https://img.shields.io/github/stars/GENEXIS-AI/chromex?style=social)](https://github.com/GENEXIS-AI/chromex/stargazers)
-[![English](https://img.shields.io/badge/readme-English-111827.svg)](./README.md)
+[![English](https://img.shields.io/badge/readme-English-111827.svg)](../README.md)
 [![한국어](https://img.shields.io/badge/readme-한국어-2563eb.svg)](./README.ko.md)
 [![日本語](https://img.shields.io/badge/readme-日本語-dc2626.svg)](./README.ja.md)
 [![简体中文](https://img.shields.io/badge/readme-简体中文-16a34a.svg)](./README.zh-CN.md)
@@ -12,17 +12,8 @@ Chromex는 Chrome과 Codex를 로컬 네이티브 브리지로 연결하는 Chro
 
 배포 주체: **GenexisAI CHOI**.
 
-![Chromex 브라우저 사이드 패널 어시스턴트](./assets/chromex-hero.png)
+![Chromex 브라우저 사이드 패널 어시스턴트](../assets/chromex-hero.png)
 
-## Star History
-
-<a href="https://www.star-history.com/#GENEXIS-AI/chromex&Date">
-  <picture>
-    <source media="(prefers-color-scheme: dark)" srcset="https://api.star-history.com/svg?repos=GENEXIS-AI/chromex&type=Date&theme=dark" />
-    <source media="(prefers-color-scheme: light)" srcset="https://api.star-history.com/svg?repos=GENEXIS-AI/chromex&type=Date" />
-    <img alt="Star History Chart" src="https://api.star-history.com/svg?repos=GENEXIS-AI/chromex&type=Date" />
-  </picture>
-</a>
 
 ## 주요 기능
 
@@ -129,7 +120,7 @@ Chromex는 기본적으로 브라우저 언어를 자동으로 따릅니다. 사
 - Native host 자식 프로세스와 워크스페이스 훅은 축소된 환경 변수 allowlist로 실행됩니다.
 - 생성 이미지 원본, 임시 업로드, 진단 로그는 로컬 브리지가 처리합니다.
 
-수정 빌드를 배포하기 전 [SECURITY.md](./SECURITY.md)와 [PRIVACY.md](./PRIVACY.md)를 확인하세요.
+수정 빌드를 배포하기 전 [SECURITY.md](../SECURITY.md)와 [PRIVACY.md](../PRIVACY.md)를 확인하세요.
 
 ## 기능
 
@@ -175,7 +166,7 @@ packages/extension/dist
 
 ## 릴리즈 관리
 
-Chromex는 `0.1.1`부터 일반 오픈소스 릴리즈 이력을 사용합니다. 버전 정책, pull request 흐름, 릴리즈 체크리스트는 [RELEASE.md](./RELEASE.md)에 정리되어 있습니다.
+Chromex는 `0.1.1`부터 일반 오픈소스 릴리즈 이력을 사용합니다. 버전 정책, pull request 흐름, 릴리즈 체크리스트는 [RELEASE.md](../RELEASE.md)에 정리되어 있습니다.
 
 ## 문제 해결
 
@@ -187,4 +178,14 @@ Chromex는 `0.1.1`부터 일반 오픈소스 릴리즈 이력을 사용합니다
 
 ## 라이선스
 
-MIT. [LICENSE](./LICENSE)를 참고하세요.
+MIT. [LICENSE](../LICENSE)를 참고하세요.
+
+## Star History
+
+<a href="https://www.star-history.com/#GENEXIS-AI/chromex&Date">
+  <picture>
+    <source media="(prefers-color-scheme: dark)" srcset="https://api.star-history.com/svg?repos=GENEXIS-AI/chromex&type=Date&theme=dark" />
+    <source media="(prefers-color-scheme: light)" srcset="https://api.star-history.com/svg?repos=GENEXIS-AI/chromex&type=Date" />
+    <img alt="Star History Chart" src="https://api.star-history.com/svg?repos=GENEXIS-AI/chromex&type=Date" />
+  </picture>
+</a>
