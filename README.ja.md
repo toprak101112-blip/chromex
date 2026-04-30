@@ -66,7 +66,14 @@ packages/extension/dist
 
 ### Windows ローカルブリッジ設定
 
-Windows では Node.js 20 LTS 以降をインストールしたうえで、`chromex` ソースフォルダから **PowerShell** で実行します。
+Windows では Node.js 20 LTS 以降をインストールしたうえで、先に Codex CLI をインストールして確認します。
+
+```powershell
+npm install -g @openai/codex
+codex --version
+```
+
+その後、`chromex` ソースフォルダから **PowerShell** で実行します。
 
 ```powershell
 npm install
@@ -87,6 +94,8 @@ node scripts/install-native-host.mjs <extension-id> --browser=chrome
 ```
 
 公開リリースで想定される ID は `menmlhahmendmkiicbjihgjhppkgaeom` です。Chrome に別の ID が表示される場合は、Chrome に表示された ID を使用してください。
+
+ログイン時に `Failed to start codex app-server` が出る場合、Chromex はローカルブリッジには接続できていますが Codex CLI を起動できていません。`codex --version` を再確認してください。Windows が Codex を見つけられない場合は、optional Codex binary path に `%APPDATA%\npm\codex.cmd` を設定するか、フォルダとして `%APPDATA%\npm` を設定します。workspace フォルダと Codex executable path は別の設定なので、Codex binary 欄にプロジェクトフォルダを入れないでください。
 
 ## ランタイム境界
 

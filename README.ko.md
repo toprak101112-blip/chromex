@@ -66,7 +66,14 @@ packages/extension/dist
 
 ### Windows 로컬 브리지 설치
 
-Windows에서는 Node.js 20 LTS 이상을 설치한 뒤 `chromex` 소스 폴더에서 **PowerShell**로 실행하세요.
+Windows에서는 Node.js 20 LTS 이상을 설치한 뒤 Codex CLI를 먼저 설치하고 확인하세요.
+
+```powershell
+npm install -g @openai/codex
+codex --version
+```
+
+그다음 `chromex` 소스 폴더에서 **PowerShell**로 실행하세요.
 
 ```powershell
 npm install
@@ -87,6 +94,8 @@ node scripts/install-native-host.mjs <extension-id> --browser=chrome
 ```
 
 공개 릴리즈의 예상 ID는 `menmlhahmendmkiicbjihgjhppkgaeom`입니다. Chrome에 다른 ID가 보이면 Chrome에 표시된 ID를 사용하세요.
+
+로그인할 때 `Failed to start codex app-server`가 나오면 Chromex가 로컬 브리지에는 연결됐지만 Codex CLI를 실행하지 못한 상태입니다. `codex --version`을 다시 확인하세요. Windows에서 Codex를 찾지 못하면 선택 Codex binary 경로를 `%APPDATA%\npm\codex.cmd`로 지정하거나 폴더를 `%APPDATA%\npm`으로 지정하세요. 작업 폴더와 Codex 실행 파일 경로는 다른 설정이므로, Codex binary 입력란에 프로젝트 폴더를 넣지 마세요.
 
 ## 런타임 경계
 

@@ -153,6 +153,7 @@ export class CodexAppServerClient {
     const command = resolution.resolvedCommand;
     this.#process = this.#spawnImpl(command, this.#buildAppServerArgs(), {
       stdio: ["pipe", "pipe", "inherit"],
+      ...createCodexSpawnOptions(command),
     });
     this.#process.on("error", (error) => {
       this.#handleProcessFailure(toStartupError(command, error));
@@ -359,6 +360,13 @@ export class CodexAppServerClient {
 function toStartupError(command: string, error: unknown): Error {
   const message = error instanceof Error ? error.message : String(error);
   return new Error(`Failed to start codex app-server with "${command}": ${message}`);
+}
+
+export function createCodexSpawnOptions(
+  command: string,
+  platformName: NodeJS.Platform = process.platform,
+): { shell?: boolean } {
+  return platformName === "win32" && /\.(?:cmd|bat)$/iu.test(command) ? { shell: true } : {};
 }
 
 function delay(delayMs: number): Promise<void> {

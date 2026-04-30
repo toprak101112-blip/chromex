@@ -53,6 +53,9 @@ describe("open-source repository hygiene", () => {
       expect(publicReadme).toContain("README.zh-CN.md");
       expect(publicReadme).toContain("install-native-host.mjs <extension-id> --browser=chrome");
       expect(publicReadme).toContain("menmlhahmendmkiicbjihgjhppkgaeom");
+      expect(publicReadme).toContain("npm install -g @openai/codex");
+      expect(publicReadme).toContain("codex --version");
+      expect(publicReadme).toContain("%APPDATA%\\npm\\codex.cmd");
     }
     expect(publicReleaseScript).toContain("requireManifestKey: true");
     expect(publicReleaseScript).toContain("must keep manifest.key");

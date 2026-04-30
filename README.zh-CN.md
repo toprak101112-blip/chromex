@@ -66,7 +66,14 @@ packages/extension/dist
 
 ### Windows 本地 Bridge 设置
 
-在 Windows 上，请先安装 Node.js 20 LTS 或更新版本，然后在 `chromex` 源码文件夹中用 **PowerShell** 运行:
+在 Windows 上，请先安装 Node.js 20 LTS 或更新版本，然后先安装并确认 Codex CLI:
+
+```powershell
+npm install -g @openai/codex
+codex --version
+```
+
+然后在 `chromex` 源码文件夹中用 **PowerShell** 运行:
 
 ```powershell
 npm install
@@ -87,6 +94,8 @@ node scripts/install-native-host.mjs <extension-id> --browser=chrome
 ```
 
 公开 release 的预期 ID 是 `menmlhahmendmkiicbjihgjhppkgaeom`。如果 Chrome 显示不同 ID，请使用 Chrome 中显示的 ID。
+
+如果登录时出现 `Failed to start codex app-server`，说明 Chromex 已连接到本地 bridge，但无法启动 Codex CLI。请再次运行 `codex --version`。如果 Windows 找不到 Codex，请将 optional Codex binary path 设置为 `%APPDATA%\npm\codex.cmd`，或将文件夹设置为 `%APPDATA%\npm`。workspace 文件夹和 Codex executable path 是两个不同设置，不要把项目文件夹填到 Codex binary 字段。
 
 ## 运行时边界
 

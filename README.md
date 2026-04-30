@@ -66,7 +66,14 @@ packages/extension/dist
 
 ### Windows Local Bridge Setup
 
-On Windows, use **PowerShell** from the `chromex` source folder after installing Node.js 20 LTS or newer:
+On Windows, install Node.js 20 LTS or newer, then install and verify the Codex CLI first:
+
+```powershell
+npm install -g @openai/codex
+codex --version
+```
+
+Then use **PowerShell** from the `chromex` source folder:
 
 ```powershell
 npm install
@@ -87,6 +94,8 @@ node scripts/install-native-host.mjs <extension-id> --browser=chrome
 ```
 
 The expected public release ID is `menmlhahmendmkiicbjihgjhppkgaeom`. If Chrome shows a different ID, use the ID shown in Chrome.
+
+If login fails with `Failed to start codex app-server`, Chromex can reach the local bridge but cannot start the Codex CLI. Re-run `codex --version`. If Windows cannot find it, set the optional Codex binary path to `%APPDATA%\npm\codex.cmd`, or set the folder to `%APPDATA%\npm`. Do not put your workspace folder in the Codex binary field; the workspace folder and Codex executable path are separate settings.
 
 ## Runtime Boundary
 
