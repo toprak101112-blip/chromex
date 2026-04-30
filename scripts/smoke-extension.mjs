@@ -155,7 +155,19 @@ try {
   ) {
     throw new Error(`Smoke test failed: @ tab selection is broken (${JSON.stringify(selectedTabMentionState)}).`);
   }
-  await page.locator("[data-tab-mention-id]").nth(1).click();
+  const clickedSecondTab = await page.evaluate(() => {
+    const button = Array.from(document.querySelectorAll("[data-tab-mention-id]")).find(
+      (node) => node instanceof HTMLButtonElement && !node.classList.contains("selected"),
+    );
+    if (!(button instanceof HTMLButtonElement)) {
+      return false;
+    }
+    button.click();
+    return true;
+  });
+  if (!clickedSecondTab) {
+    throw new Error("Smoke test failed: @ tab picker did not expose a second unselected tab.");
+  }
   const multiSelectedTabMentionState = await page.evaluate(() => ({
     composerValue: document.querySelector("#composer")?.value ?? null,
     selectedTabChips: document.querySelectorAll("[data-remove-tab-id]").length,
